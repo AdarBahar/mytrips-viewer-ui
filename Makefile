@@ -13,7 +13,7 @@ help:
 	@echo "  make dev-frontend     - Start frontend only"
 	@echo ""
 	@echo "Production:"
-	@echo "  make build            - Build frontend for production"
+	@echo "  make build            - Build frontend and create deployment package"
 	@echo "  make prod-backend     - Run backend with Gunicorn (production)"
 	@echo ""
 	@echo "Docker:"
@@ -68,13 +68,38 @@ dev-frontend:
 # Build frontend for production
 build:
 	@echo "🏗️  Building frontend for production..."
-	@bash -c "source ~/.zshrc 2>/dev/null || true; npm run build"
-	@echo "✅ Build complete! Files are in ./build/"
+	@bash -c "source ~/.zshrc 2>/dev/null || true; NODE_ENV=production npm run build"
+	@echo "📄 Copying .htaccess to build directory..."
+	@cp .htaccess build/.htaccess
+	@echo ""
+	@echo "📦 Creating deployment package..."
+	@TIMESTAMP=$$(date +%Y%m%d-%H%M%S); \
+	PACKAGE_NAME="mytrips-viewer-$$TIMESTAMP.tar.gz"; \
+	COPYFILE_DISABLE=1 tar -czf "$$PACKAGE_NAME" -C build --exclude='._*' --exclude='.DS_Store' --exclude='.Spotlight-V100' --exclude='.Trashes' . && \
+	echo "✅ Build complete!" && \
+	echo "" && \
+	echo "📁 Build directory: ./build/" && \
+	echo "📦 Deployment package: $$PACKAGE_NAME" && \
+	echo "" && \
+	echo "Package contents:" && \
+	tar -tzf "$$PACKAGE_NAME" | head -20 && \
+	if [ $$(tar -tzf "$$PACKAGE_NAME" | wc -l) -gt 20 ]; then \
+		echo "... and $$(($$(tar -tzf "$$PACKAGE_NAME" | wc -l) - 20)) more files"; \
+	fi && \
+	echo "" && \
+	PACKAGE_SIZE=$$(du -h "$$PACKAGE_NAME" | cut -f1) && \
+	echo "📊 Package size: $$PACKAGE_SIZE" && \
+	echo "" && \
+	echo "🚀 Deploy with:" && \
+	echo "   scp $$PACKAGE_NAME user@www.bahar.co.il:/tmp/" && \
+	echo "   ssh user@www.bahar.co.il" && \
+	echo "   cd /path/to/mytrips-viewer && tar -xzf /tmp/$$PACKAGE_NAME"
 
 # Clean build artifacts and caches
 clean:
 	@echo "🧹 Cleaning build artifacts..."
 	@rm -rf build/
+	@rm -f mytrips-viewer-*.tar.gz
 	@rm -rf node_modules/.cache/
 	@rm -rf backend/__pycache__/
 	@rm -rf backend/*.pyc

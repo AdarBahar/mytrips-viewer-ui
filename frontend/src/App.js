@@ -56,7 +56,7 @@ function App() {
   }
 
   return (
-    <BrowserRouter>
+    <BrowserRouter basename="/mytrips-viewer">
       <Routes>
         <Route
           path="/"

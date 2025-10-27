@@ -1,6 +1,7 @@
 // craco.config.js
 const path = require("path");
-require("dotenv").config({ path: path.resolve(__dirname, 'frontend/.env') });
+// Load environment variables based on NODE_ENV
+// Don't load .env files here - let Create React App handle it with its standard priority order
 
 // Environment variable overrides
 const config = {

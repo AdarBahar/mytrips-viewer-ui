@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-const API = `${BACKEND_URL}/api`;
+const API = BACKEND_URL;
 
 /**
  * App Login - Stateless authentication
@@ -14,7 +14,7 @@ const API = `${BACKEND_URL}/api`;
  */
 export const appLogin = async ({ email, password }) => {
   try {
-    const response = await axios.post(`${API}/app-login`, {
+    const response = await axios.post(`${API}/auth/app-login`, {
       email,
       password
     });

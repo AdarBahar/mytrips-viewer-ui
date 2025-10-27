@@ -6,8 +6,10 @@ import { toast } from 'sonner';
 import { LogOut, MapPin, Navigation, Clock, Gauge } from 'lucide-react';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-const API = `${BACKEND_URL}/api`;
+const API = BACKEND_URL;
 const GOOGLE_MAPS_API_KEY = process.env.REACT_APP_GOOGLE_MAPS_API_KEY;
+const LOC_API_BASEURL = process.env.REACT_APP_LOC_API_BASEURL;
+const LOC_API_TOKEN = process.env.REACT_APP_LOC_API_TOKEN;
 
 export default function MapDashboard({ user, onLogout }) {
   const [routes, setRoutes] = useState([]);
@@ -103,18 +105,56 @@ export default function MapDashboard({ user, onLogout }) {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [routesRes, usersRes] = await Promise.all([
-          axios.get(`${API}/routes`, axiosConfig),
-          axios.get(`${API}/users`, axiosConfig)
-        ]);
-        // Ensure we always set arrays, even if the API returns something unexpected
-        setRoutes(Array.isArray(routesRes.data) ? routesRes.data : []);
-        setUsers(Array.isArray(usersRes.data) ? usersRes.data : []);
+        // Mock routes data (no API endpoint available yet)
+        const mockRoutes = [
+          {
+            id: "route-1",
+            name: "Downtown Loop",
+            description: "City center patrol route",
+            coordinates: [
+              { lat: 40.7589, lng: -73.9851 },
+              { lat: 40.7614, lng: -73.9776 },
+              { lat: 40.7580, lng: -73.9855 },
+              { lat: 40.7505, lng: -73.9934 },
+              { lat: 40.7489, lng: -73.9680 },
+              { lat: 40.7589, lng: -73.9851 }
+            ],
+            distance: 5.2,
+            estimated_time: 45
+          }
+        ];
+        setRoutes(mockRoutes);
+
+        // Fetch users from Location API
+        const usersRes = await axios.get(`${LOC_API_BASEURL}/users.php`, {
+          params: {
+            with_location_data: 'true',
+            include_counts: 'false',
+            include_metadata: 'false'
+          },
+          headers: {
+            'Authorization': `Bearer ${LOC_API_TOKEN}`,
+            'X-API-Token': LOC_API_TOKEN,
+            'Accept': 'application/json'
+          }
+        });
+
+        // Parse Location API response format: {"status": "success", "data": {"users": [...]}}
+        if (usersRes.data?.status === 'success' && usersRes.data?.data?.users) {
+          const users = usersRes.data.data.users.map(user => ({
+            id: String(user.id),
+            name: user.display_name || user.username,
+            status: 'active'
+          }));
+          setUsers(users);
+        } else {
+          console.warn('Unexpected users API response format:', usersRes.data);
+          setUsers([]);
+        }
       } catch (error) {
         console.error('Failed to load data:', error);
-        toast.error('Failed to load data');
+        toast.error('Failed to load users data');
         // Set empty arrays on error to prevent .map() errors
-        setRoutes([]);
         setUsers([]);
         if (error.response?.status === 401) {
           onLogout();

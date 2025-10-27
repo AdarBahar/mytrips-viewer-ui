@@ -216,7 +216,7 @@ async def login(credentials: UserLogin):
 
     return Token(access_token=access_token, token_type="bearer", user=user_obj)
 
-@api_router.post("/app-login", response_model=AppLoginResponse)
+@api_router.post("/auth/app-login", response_model=AppLoginResponse)
 async def app_login(credentials: AppLoginRequest):
     """
     Stateless authentication endpoint for mobile/web apps.
@@ -425,6 +425,7 @@ async def get_trackable_users():
                     "include_metadata": "true"
                 },
                 headers={
+                    "Authorization": f"Bearer {LOC_API_TOKEN}",
                     "X-API-Token": LOC_API_TOKEN,
                     "Accept": "application/json"
                 }
@@ -519,6 +520,7 @@ async def get_user_location(user_id: str):
                     "offset": "0"
                 },
                 headers={
+                    "Authorization": f"Bearer {LOC_API_TOKEN}",
                     "X-API-Token": LOC_API_TOKEN,
                     "Accept": "application/json"
                 }
@@ -651,6 +653,7 @@ async def get_route_history(
                 api_url,
                 params=params,
                 headers={
+                    "Authorization": f"Bearer {LOC_API_TOKEN}",
                     "X-API-Token": LOC_API_TOKEN,
                     "Accept": "application/json"
                 }

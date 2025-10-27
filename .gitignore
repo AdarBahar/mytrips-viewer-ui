@@ -51,6 +51,11 @@ dist/
 frontend/build/
 backend/dist/
 
+# Deployment packages
+mytrips-viewer-*.tar.gz
+*.tar.gz
+*.zip
+
 # ============================================
 # Python
 # ============================================

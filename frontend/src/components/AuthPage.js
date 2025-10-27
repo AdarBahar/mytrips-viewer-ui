@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 import { appLogin, jwtLogin, register } from '../services/authService';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-const API = `${BACKEND_URL}/api`;
+const API = BACKEND_URL;
 
 export default function AuthPage({ onLogin }) {
   const [isLogin, setIsLogin] = useState(true);

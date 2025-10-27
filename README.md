@@ -16,10 +16,27 @@ A modern, full-stack web application for real-time location tracking and route m
 ## 🏗️ Architecture
 
 - **Frontend**: React 19 with Tailwind CSS, Google Maps JavaScript API
-- **Backend**: FastAPI (Python 3.9+) with async HTTP client
-- **Authentication**: MyTrips API integration with JWT tokens
-- **Location Data**: Real-time integration with Location API
-- **Deployment**: Docker, Nginx, or static hosting options
+- **Backend**: FastAPI (Python 3.9+) with async HTTP client (optional - for local development)
+- **Authentication**: Direct integration with MyTrips API (`https://mytrips-api.bahar.co.il`)
+- **Location Data**: Direct integration with Location API (`https://www.bahar.co.il/location/api`)
+- **Deployment**: Static hosting (Apache/Nginx) - no backend required for production
+
+### API Architecture
+
+The application uses **two separate APIs**:
+
+1. **MyTrips API** (`https://mytrips-api.bahar.co.il`)
+   - **Purpose**: User authentication
+   - **Endpoint**: `/auth/app-login`
+   - **Called by**: Frontend directly
+
+2. **Location API** (`https://www.bahar.co.il/location/api`)
+   - **Purpose**: User locations, route history, driving records
+   - **Endpoints**: `/users.php`, `/locations.php`, `/driving-records.php`
+   - **Authentication**: Both `Authorization: Bearer {LOC_API_TOKEN}` and `X-API-Token: {LOC_API_TOKEN}`
+   - **Called by**: Frontend directly
+
+**Note**: The backend (`backend/server.py`) is **optional** and only needed for local development. In production, the frontend calls both APIs directly.
 
 ## 📋 Prerequisites
 
@@ -192,18 +209,55 @@ make stop
 ### Building for Production
 
 ```bash
-# Build frontend for production
+# Build frontend and create deployment package
 make build
+```
 
-# Run backend with Gunicorn (production server)
-make prod-backend
+This will:
+- Set `NODE_ENV=production` to load `.env.production`
+- Build the optimized production bundle
+- Copy `.htaccess` file to build directory
+- Create a timestamped `.tar.gz` deployment package
+- Display deployment instructions
 
-# Or use Docker
+**Output:**
+```
+✅ Build complete!
+📁 Build directory: ./build/
+📦 Deployment package: mytrips-viewer-20251027-175614.tar.gz
+📊 Package size: 1.6M
+```
+
+**Deploy the package:**
+```bash
+# Upload to server
+scp mytrips-viewer-*.tar.gz user@www.bahar.co.il:/tmp/
+
+# SSH and extract
+ssh user@www.bahar.co.il
+cd /var/www/bahar.co.il/mytrips-viewer
+tar -xzf /tmp/mytrips-viewer-*.tar.gz
+```
+
+**Important Notes:**
+- ✅ **No backend required** for production - frontend calls external APIs directly
+- ✅ `.htaccess` file is automatically included in the build
+- ✅ Environment variables from `.env.production` are embedded at build time
+- ✅ Package excludes macOS metadata files (`._*`, `.DS_Store`)
+
+**For local development with backend:**
+```bash
+make prod-backend  # Run backend with Gunicorn (optional)
+```
+
+**Or use Docker:**
+```bash
 make docker-build
 make docker-up
 ```
 
 > 📖 **Deployment Guide**: See [DEPLOYMENT.md](./DEPLOYMENT.md) for complete production deployment instructions
+> 📖 **Bahar.co.il Deployment**: See [DEPLOYMENT_BAHAR.md](./DEPLOYMENT_BAHAR.md) for www.bahar.co.il specific instructions
 
 ## 📁 Project Structure
 
@@ -249,8 +303,24 @@ mytrips-viewer-ui/
 
 ## 🌐 API Endpoints
 
-### Authentication
-- `POST /api/app-login` - Login with MyTrips API credentials
+### Production APIs (called by frontend directly)
+
+#### MyTrips API (`https://mytrips-api.bahar.co.il`)
+- `POST /auth/app-login` - Authenticate user with email/password
+
+#### Location API (`https://www.bahar.co.il/location/api`)
+- `GET /users.php` - Get list of users with location data
+- `GET /locations.php` - Get location history for a user
+- `GET /driving-records.php` - Get driving records
+
+### Local Development Backend (optional)
+
+The backend (`backend/server.py`) is only used for local development:
+
+- `POST /auth/app-login` - Proxy to MyTrips API for authentication
+- `GET /users` - Proxy to Location API for users
+- `GET /location/{user_id}` - Proxy to Location API for user location
+- `GET /history/{user_id}` - Proxy to Location API for location history
 - `GET /health` - Health check endpoint
 
 ### Users
