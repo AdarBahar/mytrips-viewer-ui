@@ -188,7 +188,8 @@ MOCK_USER_EMAIL="testuser@example.com"
 MOCK_USER_ID="mock-user-123"
 
 # Location API Token (for app-login endpoint)
-LOC_API_TOKEN="4Q9j0INedMHobgNdJx+PqcXesQjifyl9LCE+W2phLdI="
+# Contact your Location API administrator for the token
+LOC_API_TOKEN="YOUR_LOCATION_API_TOKEN_HERE"
 
 # API Base URLs
 LOC_API_BASEURL="https://www.bahar.co.il/location/api"
@@ -204,7 +205,8 @@ JWT_SECRET="CHANGE_THIS_TO_A_SECURE_RANDOM_SECRET_IN_PRODUCTION"
 REACT_APP_BACKEND_URL=http://localhost:8000
 
 # Location API Token (optional, for client-side validation)
-LOC_API_TOKEN="4Q9j0INedMHobgNdJx+PqcXesQjifyl9LCE+W2phLdI="
+# Contact your Location API administrator for the token
+LOC_API_TOKEN="YOUR_LOCATION_API_TOKEN_HERE"
 ```
 
 ---

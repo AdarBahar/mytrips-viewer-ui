@@ -255,10 +255,13 @@ The frontend uses the following environment variables (embedded at build time):
 REACT_APP_BACKEND_URL=https://mytrips-api.bahar.co.il
 
 # Google Maps API Key
-REACT_APP_GOOGLE_MAPS_API_KEY=AIzaSyAso37mBqnBKwDqQacmx99WgfkW-M9uwLQ
+# Get your key from: https://console.cloud.google.com/apis/credentials
+# IMPORTANT: Restrict this key to www.bahar.co.il domain
+REACT_APP_GOOGLE_MAPS_API_KEY=YOUR_GOOGLE_MAPS_API_KEY_HERE
 
 # Location API Configuration
-REACT_APP_LOC_API_TOKEN=4Q9j0INedMHobgNdJx+PqcXesQjifyl9LCE+W2phLdI=
+# Contact your Location API administrator for the token
+REACT_APP_LOC_API_TOKEN=YOUR_LOCATION_API_TOKEN_HERE
 REACT_APP_LOC_API_BASEURL=https://www.bahar.co.il/location/api
 
 # MyTrips API (for authentication)
@@ -277,10 +280,12 @@ REACT_APP_MYTRIPS_API_BASEURL=https://mytrips-api.bahar.co.il
 REACT_APP_BACKEND_URL=http://localhost:8000
 
 # Google Maps API Key
-REACT_APP_GOOGLE_MAPS_API_KEY=AIzaSyAso37mBqnBKwDqQacmx99WgfkW-M9uwLQ
+# Get your key from: https://console.cloud.google.com/apis/credentials
+REACT_APP_GOOGLE_MAPS_API_KEY=YOUR_GOOGLE_MAPS_API_KEY_HERE
 
 # Location API Configuration
-REACT_APP_LOC_API_TOKEN=4Q9j0INedMHobgNdJx+PqcXesQjifyl9LCE+W2phLdI=
+# Contact your Location API administrator for the token
+REACT_APP_LOC_API_TOKEN=YOUR_LOCATION_API_TOKEN_HERE
 REACT_APP_LOC_API_BASEURL=https://www.bahar.co.il/location/api
 
 # MyTrips API
