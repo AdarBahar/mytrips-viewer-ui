@@ -2,14 +2,39 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
 import { Button } from './ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
+import { Switch } from './ui/switch';
 import { toast } from 'sonner';
-import { LogOut, MapPin, Navigation, Clock, Gauge } from 'lucide-react';
+import { LogOut, MapPin, Navigation, Clock, Gauge, Radio, Minimize2, Maximize2, X } from 'lucide-react';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = BACKEND_URL;
 const GOOGLE_MAPS_API_KEY = process.env.REACT_APP_GOOGLE_MAPS_API_KEY;
 const LOC_API_BASEURL = process.env.REACT_APP_LOC_API_BASEURL;
 const LOC_API_TOKEN = process.env.REACT_APP_LOC_API_TOKEN;
+
+// Helper function to calculate distance between points (Haversine formula)
+const calculateDistance = (points) => {
+  if (!points || points.length < 2) return 0;
+
+  let totalDistance = 0;
+  for (let i = 0; i < points.length - 1; i++) {
+    const lat1 = parseFloat(points[i].latitude);
+    const lon1 = parseFloat(points[i].longitude);
+    const lat2 = parseFloat(points[i + 1].latitude);
+    const lon2 = parseFloat(points[i + 1].longitude);
+
+    const R = 6371; // Earth's radius in km
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    totalDistance += R * c;
+  }
+
+  return totalDistance;
+};
 
 export default function MapDashboard({ user, onLogout }) {
   const [routes, setRoutes] = useState([]);
@@ -19,7 +44,10 @@ export default function MapDashboard({ user, onLogout }) {
   const [currentLocation, setCurrentLocation] = useState(null);
   const [routeHistory, setRouteHistory] = useState(null);
   const [loading, setLoading] = useState(true);
-  
+  const [isLiveTracking, setIsLiveTracking] = useState(true); // Track current location by default
+  const [isMinimized, setIsMinimized] = useState(false); // Control panel minimize state
+  const [streamCursor, setStreamCursor] = useState(0); // Cursor for live stream polling
+
   const mapRef = useRef(null);
   const googleMapRef = useRef(null);
   const plannedPolylineRef = useRef(null);
@@ -28,12 +56,11 @@ export default function MapDashboard({ user, onLogout }) {
 
   const token = localStorage.getItem('token');
 
-  // Check if it's an app-login token (format: "app-login:user_id")
-  const isAppLoginToken = token && token.startsWith('app-login:');
-
-  // Only send Authorization header if it's a real JWT token
-  const axiosConfig = isAppLoginToken ? {} : {
-    headers: { Authorization: `Bearer ${token}` }
+  // Location API headers (always use LOC_API_TOKEN for Location API calls)
+  const locationApiHeaders = {
+    'Authorization': `Bearer ${LOC_API_TOKEN}`,
+    'X-API-Token': LOC_API_TOKEN,
+    'Accept': 'application/json'
   };
 
   // Initialize Google Map
@@ -198,21 +225,55 @@ export default function MapDashboard({ user, onLogout }) {
     toast.success(`Route "${routeData.name}" loaded`);
   }, [selectedRoute, routes]);
 
-  // Fetch and display route history
+  // Fetch and display route history (only when NOT live tracking)
   useEffect(() => {
-    if (!googleMapRef.current || !selectedUser) return;
+    if (!googleMapRef.current || !selectedUser || isLiveTracking) {
+      // Clear route history when switching to live tracking
+      if (isLiveTracking) {
+        setRouteHistory(null);
+      }
+      return;
+    }
 
     const fetchHistory = async () => {
       try {
-        const response = await axios.get(`${API}/history/${selectedUser}`, axiosConfig);
-        setRouteHistory(response.data);
+        // Use Location API /live/history.php endpoint
+        // Get last 6 hours of tracking history
+        const response = await axios.get(`${LOC_API_BASEURL}/live/history.php`, {
+          params: {
+            user: users.find(u => u.id === selectedUser)?.name || selectedUser,
+            duration: 21600, // 6 hours in seconds
+            limit: 500
+          },
+          headers: locationApiHeaders
+        });
+
+        if (response.data?.status === "success" && response.data?.data?.points) {
+          const points = response.data.data.points;
+
+          // Transform to expected format
+          setRouteHistory({
+            coordinates: points.map(p => ({
+              lat: parseFloat(p.latitude),
+              lng: parseFloat(p.longitude)
+            })),
+            count: points.length,
+            distance: calculateDistance(points),
+            duration: Math.round(response.data.data.duration / 60) // Convert to minutes
+          });
+        } else {
+          setRouteHistory(null);
+          toast.info('No route history available');
+        }
       } catch (error) {
+        console.error('Failed to load route history:', error);
         toast.error('Failed to load route history');
+        setRouteHistory(null);
       }
     };
 
     fetchHistory();
-  }, [selectedUser]);
+  }, [selectedUser, isLiveTracking, users]);
 
   // Draw actual/history route
   useEffect(() => {
@@ -235,24 +296,93 @@ export default function MapDashboard({ user, onLogout }) {
     });
   }, [routeHistory]);
 
-  // Poll for real-time location
+  // Initialize live tracking with latest location
   useEffect(() => {
-    if (!selectedUser) return;
+    if (!selectedUser || !isLiveTracking) {
+      // Clear current location when switching to history mode
+      if (!isLiveTracking) {
+        setCurrentLocation(null);
+      }
+      return;
+    }
 
-    const pollLocation = async () => {
+    const initializeLiveTracking = async () => {
       try {
-        const response = await axios.get(`${API}/location/${selectedUser}`, axiosConfig);
-        setCurrentLocation(response.data);
+        // Use Location API /live/latest.php to get initial position
+        const response = await axios.get(`${LOC_API_BASEURL}/live/latest.php`, {
+          params: {
+            user: users.find(u => u.id === selectedUser)?.name || selectedUser,
+            max_age: 3600 // Last hour
+          },
+          headers: locationApiHeaders
+        });
+
+        if (response.data?.status === "success" && response.data?.data?.locations?.length > 0) {
+          const location = response.data.data.locations[0];
+          setCurrentLocation({
+            lat: parseFloat(location.latitude),
+            lng: parseFloat(location.longitude),
+            speed: location.speed,
+            battery: location.battery_level,
+            timestamp: location.server_time,
+            accuracy: location.accuracy
+          });
+
+          // Set cursor to now for streaming
+          setStreamCursor(Date.now());
+        } else {
+          toast.info('No recent location data available');
+        }
       } catch (error) {
-        console.error('Failed to fetch location:', error);
+        console.error('Failed to fetch initial location:', error);
+        toast.error('Failed to load location data');
       }
     };
 
-    pollLocation();
-    const interval = setInterval(pollLocation, 5000); // Poll every 5 seconds
+    initializeLiveTracking();
+  }, [selectedUser, isLiveTracking, users]);
+
+  // Poll for real-time location updates using stream endpoint
+  useEffect(() => {
+    if (!selectedUser || !isLiveTracking || streamCursor === 0) {
+      return;
+    }
+
+    const pollLocationStream = async () => {
+      try {
+        // Use Location API /live/stream.php for real-time updates
+        const response = await axios.get(`${LOC_API_BASEURL}/live/stream.php`, {
+          params: {
+            user: users.find(u => u.id === selectedUser)?.name || selectedUser,
+            since: streamCursor
+          },
+          headers: locationApiHeaders
+        });
+
+        if (response.data?.status === "success" && response.data?.data?.points?.length > 0) {
+          const points = response.data.data.points;
+          const latestPoint = points[points.length - 1]; // Get most recent point
+
+          setCurrentLocation({
+            lat: parseFloat(latestPoint.latitude),
+            lng: parseFloat(latestPoint.longitude),
+            speed: latestPoint.speed,
+            timestamp: latestPoint.server_time,
+            accuracy: latestPoint.accuracy
+          });
+
+          // Update cursor for next poll
+          setStreamCursor(response.data.data.cursor);
+        }
+      } catch (error) {
+        console.error('Failed to fetch location stream:', error);
+      }
+    };
+
+    const interval = setInterval(pollLocationStream, 3000); // Poll every 3 seconds
 
     return () => clearInterval(interval);
-  }, [selectedUser]);
+  }, [selectedUser, isLiveTracking, streamCursor, users]);
 
   // Update marker for current location
   useEffect(() => {
@@ -294,29 +424,66 @@ export default function MapDashboard({ user, onLogout }) {
         </div>
       )}
 
+      {/* Tracking Mode Switch - Top Right */}
+      {selectedUser && (
+        <div className="absolute top-6 right-6 bg-white/95 backdrop-blur-md rounded-xl shadow-lg border border-slate-200 p-4 z-10">
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <Radio className={`h-4 w-4 ${isLiveTracking ? 'text-red-500' : 'text-slate-400'}`} />
+              <span className="text-sm font-medium text-slate-700">
+                Track Current Location
+              </span>
+            </div>
+            <Switch
+              checked={isLiveTracking}
+              onCheckedChange={setIsLiveTracking}
+              className="data-[state=checked]:bg-red-500"
+            />
+          </div>
+          <p className="text-xs text-slate-500 mt-2">
+            {isLiveTracking ? 'Showing live location updates' : 'Showing route history'}
+          </p>
+        </div>
+      )}
+
       {/* Control Panel */}
-      <div className="absolute top-6 left-6 bg-white/95 backdrop-blur-md rounded-2xl shadow-2xl border border-slate-200 p-6 w-80 z-10">
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-2xl font-bold text-slate-800" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>
-            Route Tracker
-          </h2>
-          <Button
-            data-testid="logout-button"
-            onClick={onLogout}
-            variant="ghost"
-            size="sm"
-            className="text-slate-600 hover:text-slate-800"
-          >
-            <LogOut className="h-4 w-4" />
-          </Button>
+      <div className="absolute top-6 left-6 bg-white/95 backdrop-blur-md rounded-2xl shadow-2xl border border-slate-200 z-10 transition-all duration-300">
+        <div className={`${isMinimized ? 'p-4' : 'p-6'} ${isMinimized ? 'w-auto' : 'w-80'}`}>
+          <div className="flex items-center justify-between gap-3">
+            <h2 className={`font-bold text-slate-800 ${isMinimized ? 'text-lg' : 'text-2xl'}`} style={{ fontFamily: 'Space Grotesk, sans-serif' }}>
+              Route Tracker
+            </h2>
+            <div className="flex items-center gap-1">
+              <Button
+                data-testid="minimize-button"
+                onClick={() => setIsMinimized(!isMinimized)}
+                variant="ghost"
+                size="sm"
+                className="text-slate-600 hover:text-slate-800"
+                title={isMinimized ? 'Maximize' : 'Minimize'}
+              >
+                {isMinimized ? <Maximize2 className="h-4 w-4" /> : <Minimize2 className="h-4 w-4" />}
+              </Button>
+              <Button
+                data-testid="logout-button"
+                onClick={onLogout}
+                variant="ghost"
+                size="sm"
+                className="text-slate-600 hover:text-slate-800"
+              >
+                <LogOut className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
         </div>
 
-        <div className="space-y-4">
-          {/* User Info */}
-          <div className="p-3 bg-blue-50 rounded-lg">
-            <p className="text-sm text-blue-900 font-medium">{user?.username}</p>
-            <p className="text-xs text-blue-700">{user?.email}</p>
-          </div>
+        {!isMinimized && (
+          <div className="px-6 pb-6 space-y-4">
+            {/* User Info */}
+            <div className="p-3 bg-blue-50 rounded-lg">
+              <p className="text-sm text-blue-900 font-medium">{user?.username}</p>
+              <p className="text-xs text-blue-700">{user?.email}</p>
+            </div>
 
           {/* Route Selection */}
           <div className="space-y-2">
@@ -324,18 +491,32 @@ export default function MapDashboard({ user, onLogout }) {
               <MapPin className="h-4 w-4" />
               Select Route
             </label>
-            <Select value={selectedRoute} onValueChange={setSelectedRoute}>
-              <SelectTrigger data-testid="route-select" className="border-slate-300">
-                <SelectValue placeholder="Choose a route..." />
-              </SelectTrigger>
-              <SelectContent>
-                {routes.map(route => (
-                  <SelectItem key={route.id} value={route.id} data-testid={`route-option-${route.id}`}>
-                    {route.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="flex items-center gap-2">
+              <Select value={selectedRoute} onValueChange={setSelectedRoute}>
+                <SelectTrigger data-testid="route-select" className="border-slate-300">
+                  <SelectValue placeholder="Choose a route..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {routes.map(route => (
+                    <SelectItem key={route.id} value={route.id} data-testid={`route-option-${route.id}`}>
+                      {route.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {selectedRoute && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setSelectedRoute(null)}
+                  className="h-9 px-2 text-slate-600 hover:text-slate-800"
+                  title="Clear selection"
+                  data-testid="clear-route-button"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              )}
+            </div>
             {selectedRoute && (
               <div className="text-xs text-slate-600 mt-2">
                 {routes.find(r => r.id === selectedRoute)?.description}
@@ -349,23 +530,37 @@ export default function MapDashboard({ user, onLogout }) {
               <Navigation className="h-4 w-4" />
               Track User
             </label>
-            <Select value={selectedUser} onValueChange={setSelectedUser}>
-              <SelectTrigger data-testid="user-select" className="border-slate-300">
-                <SelectValue placeholder="Choose a user..." />
-              </SelectTrigger>
-              <SelectContent>
-                {users.map(usr => (
-                  <SelectItem key={usr.id} value={usr.id} data-testid={`user-option-${usr.id}`}>
-                    {usr.name} ({usr.status})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="flex items-center gap-2">
+              <Select value={selectedUser} onValueChange={setSelectedUser}>
+                <SelectTrigger data-testid="user-select" className="border-slate-300">
+                  <SelectValue placeholder="Choose a user..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {users.map(usr => (
+                    <SelectItem key={usr.id} value={usr.id} data-testid={`user-option-${usr.id}`}>
+                      {usr.name} ({usr.status})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {selectedUser && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setSelectedUser(null)}
+                  className="h-9 px-2 text-slate-600 hover:text-slate-800"
+                  title="Clear selection"
+                  data-testid="clear-user-button"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              )}
+            </div>
           </div>
 
-          {/* Current Location Info */}
-          {currentLocation && (
-            <div className="mt-4 p-4 bg-gradient-to-br from-emerald-50 to-teal-50 rounded-xl border border-emerald-200">
+          {/* Current Location Info (Live Tracking) */}
+          {isLiveTracking && currentLocation && (
+            <div className="mt-4 p-4 bg-gradient-to-br from-red-50 to-orange-50 rounded-xl border border-red-200">
               <h3 className="text-sm font-semibold text-slate-800 mb-3 flex items-center gap-2">
                 <div className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
                 Live Location
@@ -388,7 +583,36 @@ export default function MapDashboard({ user, onLogout }) {
               </div>
             </div>
           )}
-        </div>
+
+          {/* Route History Info (History Mode) */}
+          {!isLiveTracking && routeHistory && (
+            <div className="mt-4 p-4 bg-gradient-to-br from-emerald-50 to-teal-50 rounded-xl border border-emerald-200">
+              <h3 className="text-sm font-semibold text-slate-800 mb-3 flex items-center gap-2">
+                <Clock className="h-3 w-3" />
+                Route History
+              </h3>
+              <div className="space-y-2 text-xs">
+                <div className="flex items-center gap-2 text-slate-700">
+                  <MapPin className="h-3 w-3" />
+                  <span>{routeHistory.coordinates?.length || 0} points</span>
+                </div>
+                {routeHistory.distance && (
+                  <div className="flex items-center gap-2 text-slate-700">
+                    <Navigation className="h-3 w-3" />
+                    <span>{routeHistory.distance.toFixed(2)} km</span>
+                  </div>
+                )}
+                {routeHistory.duration && (
+                  <div className="flex items-center gap-2 text-slate-700">
+                    <Clock className="h-3 w-3" />
+                    <span>{routeHistory.duration} minutes</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+          </div>
+        )}
       </div>
 
       {/* Legend */}
@@ -399,14 +623,18 @@ export default function MapDashboard({ user, onLogout }) {
             <div className="h-1 w-8 bg-blue-500 rounded" />
             <span className="text-slate-700">Planned Route</span>
           </div>
-          <div className="flex items-center gap-3">
-            <div className="h-1 w-8 bg-emerald-500 rounded" />
-            <span className="text-slate-700">Actual Route (History)</span>
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="h-3 w-3 rounded-full bg-red-500 border-2 border-white" />
-            <span className="text-slate-700">Current Location</span>
-          </div>
+          {!isLiveTracking && (
+            <div className="flex items-center gap-3">
+              <div className="h-1 w-8 bg-emerald-500 rounded" />
+              <span className="text-slate-700">Route History</span>
+            </div>
+          )}
+          {isLiveTracking && (
+            <div className="flex items-center gap-3">
+              <div className="h-3 w-3 rounded-full bg-red-500 border-2 border-white" />
+              <span className="text-slate-700">Live Location</span>
+            </div>
+          )}
         </div>
       </div>
     </div>
