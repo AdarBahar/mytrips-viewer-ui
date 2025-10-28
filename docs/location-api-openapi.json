@@ -1,0 +1,289 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Location API",
+    "description": "Real-time location tracking and route history API for MyTrips Viewer.\n\nThis API provides endpoints for:\n- Fetching user lists with location data\n- Retrieving live location updates\n- Accessing historical location records\n- Streaming real-time location changes\n\n**Authentication**: All endpoints require both `Authorization: Bearer {token}` and `X-API-Token: {token}` headers.",
+    "version": "1.0.0",
+    "contact": {
+      "name": "MyTrips Support",
+      "url": "https://www.bahar.co.il"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://www.bahar.co.il/location/api",
+      "description": "Production server"
+    }
+  ],
+  "security": [
+    {
+      "BearerAuth": []
+    },
+    {
+      "ApiKeyAuth": []
+    }
+  ],
+  "paths": {
+    "/users.php": {
+      "get": {
+        "summary": "Get list of users",
+        "description": "Retrieve a list of all users with optional location data",
+        "operationId": "getUsers",
+        "tags": ["Users"],
+        "parameters": [
+          {
+            "name": "with_location_data",
+            "in": "query",
+            "description": "Include location data for each user",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "default": "true"
+            }
+          },
+          {
+            "name": "include_counts",
+            "in": "query",
+            "description": "Include location record counts",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "default": "false"
+            }
+          },
+          {
+            "name": "include_metadata",
+            "in": "query",
+            "description": "Include user metadata",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "default": "false"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "users": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/User"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          }
+        }
+      }
+    },
+    "/live/latest.php": {
+      "get": {
+        "summary": "Get latest location for user(s)",
+        "description": "Retrieve the most recent location data for one or more users.\n\n**Updated in v1.0.0**: Now includes `all` and `include_inactive` parameters for better filtering.",
+        "operationId": "getLatestLocation",
+        "tags": ["Live Tracking"],
+        "parameters": [
+          {
+            "name": "user",
+            "in": "query",
+            "description": "Username to get location for",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "Adar"
+            }
+          },
+          {
+            "name": "all",
+            "in": "query",
+            "description": "Get locations for all users (if false, only specified user)",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "default": "false"
+            }
+          },
+          {
+            "name": "max_age",
+            "in": "query",
+            "description": "Maximum age of location data in seconds",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 3600,
+              "example": 3600
+            }
+          },
+          {
+            "name": "include_inactive",
+            "in": "query",
+            "description": "Include inactive users in results",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "default": "false"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "locations": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/Location"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          }
+        }
+      }
+    },
+    "/live/stream.php": {
+      "get": {
+        "summary": "Stream location updates",
+        "description": "Get location updates since a specific timestamp (cursor-based polling)",
+        "operationId": "streamLocations",
+        "tags": ["Live Tracking"],
+        "parameters": [
+          {
+            "name": "user",
+            "in": "query",
+            "description": "Username to stream locations for",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "Adar"
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "description": "Unix timestamp (milliseconds) to get updates since",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "example": 1698765432000
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "points": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/Location"
+                          }
+                        },
+                        "cursor": {
+                          "type": "integer",
+                          "format": "int64",
+                          "description": "New cursor value for next poll",
+                          "example": 1698765435000
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          }
+        }
+      }
+    },
+    "/live/history.php": {
+      "get": {
+        "summary": "Get location history (cache)",
+        "description": "Retrieve location history from cache for fast queries. Best for recent data (last hour, last 24 hours).",
+        "operationId": "getLocationHistoryCache",
+        "tags": ["Route History"],
+        "parameters": [
+          {
+            "name": "user",
+            "in": "query",
+            "description": "Username to get history for",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "Adar"
+            }
+          },
+          {
+            "name": "duration",
+            "in": "query",
+            "description": "Duration in seconds (3600 = 1 hour, 86400 = 24 hours)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 3600,
+              "example": 86400
+            }
+          }
+        ]
+      }
+    }
+  }
+}
+

@@ -4,7 +4,7 @@ import { Button } from './ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Switch } from './ui/switch';
 import { toast } from 'sonner';
-import { LogOut, MapPin, Navigation, Clock, Gauge, Radio, Minimize2, Maximize2, X } from 'lucide-react';
+import { LogOut, MapPin, Navigation, Clock, Gauge, Radio, Minimize2, Maximize2, X, Bug } from 'lucide-react';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = BACKEND_URL;
@@ -36,6 +36,30 @@ const calculateDistance = (points) => {
   return totalDistance;
 };
 
+// Helper function to generate CURL command for debugging
+const generateCurlCommand = (method, url, headers, params = null, data = null) => {
+  let curl = `curl -X ${method} '${url}`;
+
+  if (params) {
+    const queryString = new URLSearchParams(params).toString();
+    curl = `curl -X ${method} '${url}?${queryString}`;
+  }
+
+  curl += "'";
+
+  if (headers) {
+    Object.entries(headers).forEach(([key, value]) => {
+      curl += ` \\\n  -H '${key}: ${value}'`;
+    });
+  }
+
+  if (data) {
+    curl += ` \\\n  -d '${JSON.stringify(data)}'`;
+  }
+
+  return curl;
+};
+
 export default function MapDashboard({ user, onLogout }) {
   const [routes, setRoutes] = useState([]);
   const [users, setUsers] = useState([]);
@@ -47,6 +71,10 @@ export default function MapDashboard({ user, onLogout }) {
   const [isLiveTracking, setIsLiveTracking] = useState(true); // Track current location by default
   const [isMinimized, setIsMinimized] = useState(false); // Control panel minimize state
   const [streamCursor, setStreamCursor] = useState(0); // Cursor for live stream polling
+  const [timeRange, setTimeRange] = useState('last_24_hours'); // Time range for history
+  const [historyOffset, setHistoryOffset] = useState(0); // Pagination offset
+  const [historyTotal, setHistoryTotal] = useState(0); // Total history records
+  const [debugMode, setDebugMode] = useState(false); // Debug mode toggle
 
   const mapRef = useRef(null);
   const googleMapRef = useRef(null);
@@ -153,18 +181,35 @@ export default function MapDashboard({ user, onLogout }) {
         setRoutes(mockRoutes);
 
         // Fetch users from Location API
+        const usersParams = {
+          with_location_data: 'true',
+          include_counts: 'false',
+          include_metadata: 'false'
+        };
+        const usersHeaders = {
+          'Authorization': `Bearer ${LOC_API_TOKEN}`,
+          'X-API-Token': LOC_API_TOKEN,
+          'Accept': 'application/json'
+        };
+
+        if (debugMode) {
+          console.group('🌐 API Call: Fetch Users');
+          console.log('📤 CURL Command:');
+          console.log(generateCurlCommand('GET', `${LOC_API_BASEURL}/users.php`, usersHeaders, usersParams));
+          console.groupEnd();
+        }
+
         const usersRes = await axios.get(`${LOC_API_BASEURL}/users.php`, {
-          params: {
-            with_location_data: 'true',
-            include_counts: 'false',
-            include_metadata: 'false'
-          },
-          headers: {
-            'Authorization': `Bearer ${LOC_API_TOKEN}`,
-            'X-API-Token': LOC_API_TOKEN,
-            'Accept': 'application/json'
-          }
+          params: usersParams,
+          headers: usersHeaders
         });
+
+        if (debugMode) {
+          console.group('🌐 API Response: Fetch Users');
+          console.log('📥 Status:', usersRes.status);
+          console.log('📥 Response Data:', usersRes.data);
+          console.groupEnd();
+        }
 
         // Parse Location API response format: {"status": "success", "data": {"users": [...]}}
         if (usersRes.data?.status === 'success' && usersRes.data?.data?.users) {
@@ -231,26 +276,111 @@ export default function MapDashboard({ user, onLogout }) {
       // Clear route history when switching to live tracking
       if (isLiveTracking) {
         setRouteHistory(null);
+        setHistoryOffset(0);
+        setHistoryTotal(0);
       }
       return;
     }
 
     const fetchHistory = async () => {
       try {
-        // Use Location API /live/history.php endpoint
-        // Get last 6 hours of tracking history
-        const response = await axios.get(`${LOC_API_BASEURL}/live/history.php`, {
-          params: {
-            user: users.find(u => u.id === selectedUser)?.name || selectedUser,
-            duration: 21600, // 6 hours in seconds
-            limit: 500
-          },
-          headers: locationApiHeaders
-        });
+        const username = users.find(u => u.id === selectedUser)?.name || selectedUser;
 
-        if (response.data?.status === "success" && response.data?.data?.points) {
-          const points = response.data.data.points;
+        // Determine which endpoint to use based on time range
+        const isRecentHistory = timeRange === 'last_hour' || timeRange === 'last_24_hours';
 
+        let response;
+        let points;
+        let total;
+
+        if (isRecentHistory) {
+          // Use /live/history.php for recent data (≤24 hours)
+          const duration = timeRange === 'last_hour' ? 3600 : 86400;
+          const historyParams = {
+            user: username,
+            duration: duration,
+            limit: 1000,
+            offset: historyOffset
+          };
+
+          if (debugMode) {
+            console.group('🌐 API Call: Fetch Route History (Cache)');
+            console.log('📤 CURL Command:');
+            console.log(generateCurlCommand('GET', `${LOC_API_BASEURL}/live/history.php`, locationApiHeaders, historyParams));
+            console.groupEnd();
+          }
+
+          response = await axios.get(`${LOC_API_BASEURL}/live/history.php`, {
+            params: historyParams,
+            headers: locationApiHeaders
+          });
+
+          if (debugMode) {
+            console.group('🌐 API Response: Fetch Route History (Cache)');
+            console.log('📥 Status:', response.status);
+            console.log('📥 Response Data:', response.data);
+            if (response.data?.data?.points) {
+              console.log('📊 Points Count:', response.data.data.points.length);
+              console.log('📊 Total Available:', response.data.data.total);
+            }
+            console.groupEnd();
+          }
+
+          if (response.data?.status === "success" && response.data?.data?.points) {
+            points = response.data.data.points;
+            total = response.data.data.total || points.length;
+          }
+        } else {
+          // Use /locations.php for older data (>24 hours or all time)
+          const params = {
+            user: username,
+            limit: 1000,
+            offset: historyOffset,
+            include_anomaly_status: 'true'
+          };
+
+          // Add date range based on time range selection
+          if (timeRange === 'last_week') {
+            const weekAgo = new Date(Date.now() - (7 * 24 * 60 * 60 * 1000));
+            params.date_from = weekAgo.toISOString().split('T')[0];
+            params.date_to = new Date().toISOString().split('T')[0];
+          } else if (timeRange === 'last_month') {
+            const monthAgo = new Date(Date.now() - (30 * 24 * 60 * 60 * 1000));
+            params.date_from = monthAgo.toISOString().split('T')[0];
+            params.date_to = new Date().toISOString().split('T')[0];
+          }
+          // For 'all' time range, no date filters
+
+          if (debugMode) {
+            console.group('🌐 API Call: Fetch Route History (Database)');
+            console.log('📤 CURL Command:');
+            console.log(generateCurlCommand('GET', `${LOC_API_BASEURL}/locations.php`, locationApiHeaders, params));
+            console.groupEnd();
+          }
+
+          response = await axios.get(`${LOC_API_BASEURL}/locations.php`, {
+            params,
+            headers: locationApiHeaders
+          });
+
+          if (debugMode) {
+            console.group('🌐 API Response: Fetch Route History (Database)');
+            console.log('📥 Status:', response.status);
+            console.log('📥 Response Data:', response.data);
+            if (response.data?.data) {
+              console.log('📊 Points Count:', response.data.data.length);
+              console.log('📊 Total Available:', response.data.total);
+            }
+            console.groupEnd();
+          }
+
+          if (response.data?.status === "success" && response.data?.data) {
+            points = response.data.data;
+            total = response.data.total || points.length;
+          }
+        }
+
+        if (points && points.length > 0) {
           // Transform to expected format
           setRouteHistory({
             coordinates: points.map(p => ({
@@ -259,21 +389,27 @@ export default function MapDashboard({ user, onLogout }) {
             })),
             count: points.length,
             distance: calculateDistance(points),
-            duration: Math.round(response.data.data.duration / 60) // Convert to minutes
+            duration: isRecentHistory
+              ? Math.round(response.data.data.duration / 60)
+              : null, // Duration not available from /locations.php
+            source: isRecentHistory ? 'cache' : 'database'
           });
+          setHistoryTotal(total);
         } else {
           setRouteHistory(null);
-          toast.info('No route history available');
+          setHistoryTotal(0);
+          toast.info('No route history available for selected time range');
         }
       } catch (error) {
         console.error('Failed to load route history:', error);
         toast.error('Failed to load route history');
         setRouteHistory(null);
+        setHistoryTotal(0);
       }
     };
 
     fetchHistory();
-  }, [selectedUser, isLiveTracking, users]);
+  }, [selectedUser, isLiveTracking, timeRange, historyOffset]); // Removed 'users' from dependencies
 
   // Draw actual/history route
   useEffect(() => {
@@ -308,25 +444,58 @@ export default function MapDashboard({ user, onLogout }) {
 
     const initializeLiveTracking = async () => {
       try {
+        // Get username from selectedUser
+        const username = users.find(u => u.id === selectedUser)?.name || selectedUser;
+
+        const latestParams = {
+          user: username,
+          all: 'false',
+          max_age: 3600, // Last hour
+          include_inactive: 'false'
+        };
+
+        if (debugMode) {
+          console.group('🌐 API Call: Initialize Live Tracking');
+          console.log('📤 CURL Command:');
+          console.log(generateCurlCommand('GET', `${LOC_API_BASEURL}/live/latest.php`, locationApiHeaders, latestParams));
+          console.groupEnd();
+        }
+
         // Use Location API /live/latest.php to get initial position
         const response = await axios.get(`${LOC_API_BASEURL}/live/latest.php`, {
-          params: {
-            user: users.find(u => u.id === selectedUser)?.name || selectedUser,
-            max_age: 3600 // Last hour
-          },
+          params: latestParams,
           headers: locationApiHeaders
         });
 
+        if (debugMode) {
+          console.group('🌐 API Response: Initialize Live Tracking');
+          console.log('📥 Status:', response.status);
+          console.log('📥 Response Data:', response.data);
+          if (response.data?.data?.locations) {
+            console.log('📊 Locations Count:', response.data.data.locations.length);
+            if (response.data.data.locations.length > 0) {
+              console.log('📍 Latest Location:', response.data.data.locations[0]);
+            }
+          }
+          console.groupEnd();
+        }
+
         if (response.data?.status === "success" && response.data?.data?.locations?.length > 0) {
           const location = response.data.data.locations[0];
-          setCurrentLocation({
+          const locationData = {
             lat: parseFloat(location.latitude),
             lng: parseFloat(location.longitude),
             speed: location.speed,
             battery: location.battery_level,
             timestamp: location.server_time,
             accuracy: location.accuracy
-          });
+          };
+
+          if (debugMode) {
+            console.log('✅ Setting current location:', locationData);
+          }
+
+          setCurrentLocation(locationData);
 
           // Set cursor to now for streaming
           setStreamCursor(Date.now());
@@ -340,7 +509,7 @@ export default function MapDashboard({ user, onLogout }) {
     };
 
     initializeLiveTracking();
-  }, [selectedUser, isLiveTracking, users]);
+  }, [selectedUser, isLiveTracking]); // Removed 'users' from dependencies
 
   // Poll for real-time location updates using stream endpoint
   useEffect(() => {
@@ -350,26 +519,55 @@ export default function MapDashboard({ user, onLogout }) {
 
     const pollLocationStream = async () => {
       try {
+        // Get username from selectedUser
+        const username = users.find(u => u.id === selectedUser)?.name || selectedUser;
+
+        const streamParams = {
+          user: username,
+          since: streamCursor
+        };
+
+        if (debugMode) {
+          console.group('🌐 API Call: Poll Live Stream');
+          console.log('📤 CURL Command:');
+          console.log(generateCurlCommand('GET', `${LOC_API_BASEURL}/live/stream.php`, locationApiHeaders, streamParams));
+          console.groupEnd();
+        }
+
         // Use Location API /live/stream.php for real-time updates
         const response = await axios.get(`${LOC_API_BASEURL}/live/stream.php`, {
-          params: {
-            user: users.find(u => u.id === selectedUser)?.name || selectedUser,
-            since: streamCursor
-          },
+          params: streamParams,
           headers: locationApiHeaders
         });
+
+        if (debugMode) {
+          console.group('🌐 API Response: Poll Live Stream');
+          console.log('📥 Status:', response.status);
+          console.log('📥 Response Data:', response.data);
+          if (response.data?.data?.points) {
+            console.log('📊 New Points:', response.data.data.points.length);
+            console.log('📊 New Cursor:', response.data.data.cursor);
+          }
+          console.groupEnd();
+        }
 
         if (response.data?.status === "success" && response.data?.data?.points?.length > 0) {
           const points = response.data.data.points;
           const latestPoint = points[points.length - 1]; // Get most recent point
 
-          setCurrentLocation({
+          const locationData = {
             lat: parseFloat(latestPoint.latitude),
             lng: parseFloat(latestPoint.longitude),
             speed: latestPoint.speed,
             timestamp: latestPoint.server_time,
             accuracy: latestPoint.accuracy
-          });
+          };
+
+          if (debugMode) {
+            console.log('✅ Updating current location:', locationData);
+          }
+
+          setCurrentLocation(locationData);
 
           // Update cursor for next poll
           setStreamCursor(response.data.data.cursor);
@@ -382,7 +580,7 @@ export default function MapDashboard({ user, onLogout }) {
     const interval = setInterval(pollLocationStream, 3000); // Poll every 3 seconds
 
     return () => clearInterval(interval);
-  }, [selectedUser, isLiveTracking, streamCursor, users]);
+  }, [selectedUser, isLiveTracking, streamCursor]); // Removed 'users' from dependencies
 
   // Update marker for current location
   useEffect(() => {
@@ -483,6 +681,22 @@ export default function MapDashboard({ user, onLogout }) {
             <div className="p-3 bg-blue-50 rounded-lg">
               <p className="text-sm text-blue-900 font-medium">{user?.username}</p>
               <p className="text-xs text-blue-700">{user?.email}</p>
+
+              {/* Debug Mode Toggle */}
+              <div className="flex items-center gap-2 mt-3 pt-3 border-t border-blue-200">
+                <Bug className={`h-3 w-3 ${debugMode ? 'text-orange-600' : 'text-blue-400'}`} />
+                <span className="text-xs font-medium text-blue-900">Debug Mode</span>
+                <Switch
+                  checked={debugMode}
+                  onCheckedChange={setDebugMode}
+                  className="ml-auto data-[state=checked]:bg-orange-500"
+                />
+              </div>
+              {debugMode && (
+                <p className="text-xs text-orange-600 mt-2">
+                  🐛 API calls will be logged to console
+                </p>
+              )}
             </div>
 
           {/* Route Selection */}
@@ -558,6 +772,48 @@ export default function MapDashboard({ user, onLogout }) {
             </div>
           </div>
 
+          {/* Time Range Selection (History Mode Only) */}
+          {!isLiveTracking && selectedUser && (
+            <div className="space-y-2">
+              <label className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+                <Clock className="h-4 w-4" />
+                Time Range
+              </label>
+              <Select value={timeRange} onValueChange={(value) => {
+                setTimeRange(value);
+                setHistoryOffset(0); // Reset pagination when changing time range
+              }}>
+                <SelectTrigger data-testid="time-range-select" className="border-slate-300">
+                  <SelectValue placeholder="Select time range..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="last_hour" data-testid="time-range-last-hour">
+                    Last Hour
+                  </SelectItem>
+                  <SelectItem value="last_24_hours" data-testid="time-range-last-24-hours">
+                    Last 24 Hours
+                  </SelectItem>
+                  <SelectItem value="last_week" data-testid="time-range-last-week">
+                    Last Week
+                  </SelectItem>
+                  <SelectItem value="last_month" data-testid="time-range-last-month">
+                    Last Month
+                  </SelectItem>
+                  <SelectItem value="all" data-testid="time-range-all">
+                    All Time
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <div className="text-xs text-slate-500 mt-1">
+                {timeRange === 'last_hour' && '📊 Fast cache-based query'}
+                {timeRange === 'last_24_hours' && '📊 Fast cache-based query'}
+                {timeRange === 'last_week' && '🗄️ Full database query'}
+                {timeRange === 'last_month' && '🗄️ Full database query'}
+                {timeRange === 'all' && '🗄️ Full database query (all records)'}
+              </div>
+            </div>
+          )}
+
           {/* Current Location Info (Live Tracking) */}
           {isLiveTracking && currentLocation && (
             <div className="mt-4 p-4 bg-gradient-to-br from-red-50 to-orange-50 rounded-xl border border-red-200">
@@ -590,11 +846,21 @@ export default function MapDashboard({ user, onLogout }) {
               <h3 className="text-sm font-semibold text-slate-800 mb-3 flex items-center gap-2">
                 <Clock className="h-3 w-3" />
                 Route History
+                {routeHistory.source && (
+                  <span className="text-xs font-normal text-emerald-600">
+                    ({routeHistory.source === 'cache' ? '⚡ Cache' : '🗄️ Database'})
+                  </span>
+                )}
               </h3>
               <div className="space-y-2 text-xs">
                 <div className="flex items-center gap-2 text-slate-700">
                   <MapPin className="h-3 w-3" />
                   <span>{routeHistory.coordinates?.length || 0} points</span>
+                  {historyTotal > routeHistory.count && (
+                    <span className="text-emerald-600">
+                      (of {historyTotal} total)
+                    </span>
+                  )}
                 </div>
                 {routeHistory.distance && (
                   <div className="flex items-center gap-2 text-slate-700">
@@ -609,6 +875,35 @@ export default function MapDashboard({ user, onLogout }) {
                   </div>
                 )}
               </div>
+
+              {/* Pagination Controls */}
+              {historyTotal > routeHistory.count && (
+                <div className="mt-3 pt-3 border-t border-emerald-200">
+                  <div className="flex items-center justify-between gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setHistoryOffset(Math.max(0, historyOffset - 1000))}
+                      disabled={historyOffset === 0}
+                      className="text-xs h-7"
+                    >
+                      ← Previous
+                    </Button>
+                    <span className="text-xs text-slate-600">
+                      {historyOffset + 1}-{Math.min(historyOffset + routeHistory.count, historyTotal)}
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setHistoryOffset(historyOffset + 1000)}
+                      disabled={historyOffset + routeHistory.count >= historyTotal}
+                      className="text-xs h-7"
+                    >
+                      Next →
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
           </div>

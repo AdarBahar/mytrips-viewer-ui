@@ -6,12 +6,14 @@ A modern, full-stack web application for real-time location tracking and route m
 
 - 🗺️ **Interactive Google Maps** - Real-time location tracking with AdvancedMarkerElement
 - 👥 **User Management** - View and track multiple users
-- 📍 **Live Location** - Display current user positions on the map
-- 🛣️ **Route History** - Visualize historical routes with timestamps
+- 📍 **Live Location** - Display current user positions on the map with live tracking toggle
+- 🛣️ **Route History** - Visualize historical routes with flexible time range selection
+- 🐛 **Debug Mode** - Built-in API debugging with CURL command generation and response logging
 - 🔐 **Secure Authentication** - Integration with MyTrips API and Location API
 - 🎨 **Modern UI** - Built with React, Tailwind CSS, and Radix UI components
 - 🐳 **Docker Ready** - Easy deployment with Docker Compose
 - 📱 **Responsive Design** - Works on desktop and mobile devices
+- ⚡ **Smart Caching** - Intelligent endpoint selection for optimal performance
 
 ## 🏗️ Architecture
 
@@ -31,10 +33,16 @@ The application uses **two separate APIs**:
    - **Called by**: Frontend directly
 
 2. **Location API** (`https://www.bahar.co.il/location/api`)
-   - **Purpose**: User locations, route history, driving records
-   - **Endpoints**: `/users.php`, `/locations.php`, `/driving-records.php`
+   - **Purpose**: User locations, route history, live tracking
+   - **Endpoints**:
+     - `/users.php` - Get list of users
+     - `/live/latest.php` - Get latest location (with `all`, `max_age`, `include_inactive` params)
+     - `/live/stream.php` - Stream location updates (cursor-based polling)
+     - `/live/history.php` - Get cached location history (fast, for recent data)
+     - `/locations.php` - Get location history from database (for date ranges)
    - **Authentication**: Both `Authorization: Bearer {LOC_API_TOKEN}` and `X-API-Token: {LOC_API_TOKEN}`
    - **Called by**: Frontend directly
+   - **Documentation**: See [Location API OpenAPI Spec](docs/location-api-openapi.yaml) and [Swagger UI](docs/location-api-swagger.html)
 
 **Note**: The backend (`backend/server.py`) is **optional** and only needed for local development. In production, the frontend calls both APIs directly.
 
@@ -142,6 +150,38 @@ The application integrates with **MyTrips API** for authentication:
 - **Password**: `admin123`
 
 > 📖 **Full Documentation**: See [AUTHENTICATION.md](./AUTHENTICATION.md) for complete authentication guide.
+
+## 🐛 Debug Mode
+
+The application includes a built-in debug mode for troubleshooting API calls:
+
+1. **Enable Debug Mode**: Toggle the debug switch in the Route Tracker card (next to the user info)
+2. **View API Calls**: Open browser console (F12) to see detailed logs
+3. **CURL Commands**: Each API call logs an executable CURL command for testing
+4. **Response Data**: Full API responses are logged with status codes and data
+
+**Debug Output Example**:
+```
+🌐 API Call: Initialize Live Tracking
+  📤 CURL Command:
+  curl -X GET 'https://www.bahar.co.il/location/api/live/latest.php?user=Adar&all=false&max_age=3600&include_inactive=false' \
+    -H 'Authorization: Bearer {token}' \
+    -H 'X-API-Token: {token}' \
+    -H 'Accept: application/json'
+
+🌐 API Response: Initialize Live Tracking
+  📥 Status: 200
+  📥 Response Data: {status: "success", data: {...}}
+  📊 Locations Count: 1
+  📍 Latest Location: {...}
+```
+
+**Debugged API Calls**:
+- Fetch Users (`/users.php`)
+- Initialize Live Tracking (`/live/latest.php`)
+- Poll Live Stream (`/live/stream.php`)
+- Fetch Route History - Cache (`/live/history.php`)
+- Fetch Route History - Database (`/locations.php`)
 
 ## 🔐 Security Configuration
 
@@ -418,6 +458,37 @@ See [DEPLOYMENT.md](./DEPLOYMENT.md) for detailed instructions.
 3. Commit your changes (`git commit -m 'Add amazing feature'`)
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
+
+## 📖 API Documentation
+
+### Location API
+
+The Location API provides real-time location tracking and historical route data.
+
+**OpenAPI Specification**:
+- **YAML**: [docs/location-api-openapi.yaml](docs/location-api-openapi.yaml)
+- **JSON**: [docs/location-api-openapi.json](docs/location-api-openapi.json)
+- **Swagger UI**: [docs/location-api-swagger.html](docs/location-api-swagger.html)
+
+**Key Endpoints**:
+
+| Endpoint | Method | Description | Parameters |
+|----------|--------|-------------|------------|
+| `/users.php` | GET | Get list of users | `with_location_data`, `include_counts`, `include_metadata` |
+| `/live/latest.php` | GET | Get latest location | `user`, `all`, `max_age`, `include_inactive` |
+| `/live/stream.php` | GET | Stream location updates | `user`, `since` |
+| `/live/history.php` | GET | Get cached history (fast) | `user`, `duration`, `limit`, `offset` |
+| `/locations.php` | GET | Get database history | `user`, `date_from`, `date_to`, `limit`, `offset` |
+
+**Authentication**: All endpoints require both headers:
+- `Authorization: Bearer {LOC_API_TOKEN}`
+- `X-API-Token: {LOC_API_TOKEN}`
+
+**Recent Changes** (v1.0.0):
+- ✨ Added `all` parameter to `/live/latest.php` (default: `false`)
+- ✨ Added `include_inactive` parameter to `/live/latest.php` (default: `false`)
+- 🐛 Added debug mode with CURL command generation
+- ⚡ Improved endpoint selection logic for optimal performance
 
 ## 📄 License
 
