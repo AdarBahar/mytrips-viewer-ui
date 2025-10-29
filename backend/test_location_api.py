@@ -4,6 +4,7 @@ Test script to verify Location API connectivity
 """
 import httpx
 import os
+import sys
 from dotenv import load_dotenv
 from pathlib import Path
 import json
@@ -15,11 +16,19 @@ load_dotenv(ROOT_DIR / '.env')
 LOC_API_BASEURL = os.environ.get('LOC_API_BASEURL')
 LOC_API_TOKEN = os.environ.get('LOC_API_TOKEN')
 
+# SECURITY: Check for --verbose flag before printing sensitive data
+VERBOSE = '--verbose' in sys.argv
+
 print("=" * 60)
 print("Location API Connection Test")
 print("=" * 60)
 print(f"API Base URL: {LOC_API_BASEURL}")
-print(f"LOC_API_TOKEN: {LOC_API_TOKEN[:20]}..." if LOC_API_TOKEN else "LOC_API_TOKEN: Not set")
+# SECURITY: Never print tokens, even partially, unless explicitly requested
+if VERBOSE:
+    print(f"⚠️  VERBOSE MODE: LOC_API_TOKEN: {LOC_API_TOKEN[:20]}..." if LOC_API_TOKEN else "LOC_API_TOKEN: Not set")
+else:
+    print(f"LOC_API_TOKEN: {'[SET]' if LOC_API_TOKEN else '[NOT SET]'}")
+    print("   (Use --verbose flag to see token preview)")
 print("=" * 60)
 
 # Test /users.php endpoint
@@ -42,7 +51,13 @@ for method_name, auth_headers in auth_methods:
             api_url = f"{LOC_API_BASEURL}/users.php"
 
             print(f"  📤 GET {api_url}")
-            print(f"  📤 Headers: {auth_headers}")
+
+            # SECURITY: Redact sensitive headers before printing
+            if VERBOSE:
+                print(f"  📤 Headers: {auth_headers}")
+            else:
+                redacted_headers = {k: '[REDACTED]' for k in auth_headers.keys()}
+                print(f"  📤 Headers: {redacted_headers}")
 
             headers = {**auth_headers, "Accept": "application/json"}
 
@@ -60,8 +75,12 @@ for method_name, auth_headers in auth_methods:
 
             if response.status_code == 200:
                 data = response.json()
-                print(f"  📥 Response:")
-                print(json.dumps(data, indent=2))
+                # SECURITY: Only print full response in verbose mode
+                if VERBOSE:
+                    print(f"  📥 Response:")
+                    print(json.dumps(data, indent=2))
+                else:
+                    print(f"  📥 Response: [Use --verbose to see full response]")
 
                 if data.get('success'):
                     print(f"\n  ✅ SUCCESS with {method_name}!")

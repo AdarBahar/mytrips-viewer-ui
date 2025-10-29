@@ -6,11 +6,21 @@ import { Switch } from './ui/switch';
 import { toast } from 'sonner';
 import { LogOut, MapPin, Navigation, Clock, Gauge, Radio, Minimize2, Maximize2, X, Bug } from 'lucide-react';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-const API = BACKEND_URL;
+// Environment variables - validate at module load
 const GOOGLE_MAPS_API_KEY = process.env.REACT_APP_GOOGLE_MAPS_API_KEY;
 const LOC_API_BASEURL = process.env.REACT_APP_LOC_API_BASEURL;
 const LOC_API_TOKEN = process.env.REACT_APP_LOC_API_TOKEN;
+
+// Validate required environment variables
+if (!GOOGLE_MAPS_API_KEY) {
+  console.error('REACT_APP_GOOGLE_MAPS_API_KEY is not defined');
+}
+if (!LOC_API_BASEURL) {
+  console.error('REACT_APP_LOC_API_BASEURL is not defined');
+}
+if (!LOC_API_TOKEN) {
+  console.error('REACT_APP_LOC_API_TOKEN is not defined');
+}
 
 // Helper function to calculate distance between points (Haversine formula)
 const calculateDistance = (points) => {
@@ -37,6 +47,7 @@ const calculateDistance = (points) => {
 };
 
 // Helper function to generate CURL command for debugging
+// SECURITY: Scrubs sensitive headers to prevent token leakage in logs
 const generateCurlCommand = (method, url, headers, params = null, data = null) => {
   let curl = `curl -X ${method} '${url}`;
 
@@ -48,8 +59,13 @@ const generateCurlCommand = (method, url, headers, params = null, data = null) =
   curl += "'";
 
   if (headers) {
+    // Scrub sensitive headers before logging
+    const sensitiveHeaders = ['authorization', 'x-api-token', 'x-api-key', 'bearer'];
     Object.entries(headers).forEach(([key, value]) => {
-      curl += ` \\\n  -H '${key}: ${value}'`;
+      const keyLower = key.toLowerCase();
+      const isSensitive = sensitiveHeaders.some(h => keyLower.includes(h));
+      const safeValue = isSensitive ? '[REDACTED]' : value;
+      curl += ` \\\n  -H '${key}: ${safeValue}'`;
     });
   }
 
@@ -237,7 +253,7 @@ export default function MapDashboard({ user, onLogout }) {
     if (token) {
       fetchData();
     }
-  }, [token]);
+  }, [token, debugMode, onLogout]); // Include all dependencies used in effect
 
   // Draw planned route
   useEffect(() => {
@@ -409,7 +425,7 @@ export default function MapDashboard({ user, onLogout }) {
     };
 
     fetchHistory();
-  }, [selectedUser, isLiveTracking, timeRange, historyOffset]); // Removed 'users' from dependencies
+  }, [selectedUser, isLiveTracking, timeRange, historyOffset, users, debugMode]); // Include all dependencies
 
   // Draw actual/history route
   useEffect(() => {
@@ -509,7 +525,7 @@ export default function MapDashboard({ user, onLogout }) {
     };
 
     initializeLiveTracking();
-  }, [selectedUser, isLiveTracking]); // Removed 'users' from dependencies
+  }, [selectedUser, isLiveTracking, users, debugMode]); // Include all dependencies
 
   // Poll for real-time location updates using stream endpoint
   useEffect(() => {
@@ -580,7 +596,7 @@ export default function MapDashboard({ user, onLogout }) {
     const interval = setInterval(pollLocationStream, 3000); // Poll every 3 seconds
 
     return () => clearInterval(interval);
-  }, [selectedUser, isLiveTracking, streamCursor]); // Removed 'users' from dependencies
+  }, [selectedUser, isLiveTracking, streamCursor, users, debugMode]); // Include all dependencies
 
   // Update marker for current location
   useEffect(() => {

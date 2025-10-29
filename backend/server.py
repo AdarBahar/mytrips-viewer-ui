@@ -17,6 +17,12 @@ import httpx
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
+# SECURITY: Debug mode configuration
+# When DEBUG_MODE is false, sensitive data (emails, tokens, API responses) will not be logged
+DEBUG_MODE = os.environ.get('DEBUG_MODE', 'false').lower() == 'true'
+if DEBUG_MODE:
+    logging.warning("⚠️  DEBUG MODE IS ENABLED - Sensitive data will be logged. DO NOT USE IN PRODUCTION!")
+
 # Mock authentication configuration
 MOCK_AUTH_ENABLED = os.environ.get('MOCK_AUTH_ENABLED', 'false').lower() == 'true'
 if MOCK_AUTH_ENABLED:
@@ -264,8 +270,13 @@ async def app_login(credentials: AppLoginRequest):
             # Call MyTrips API app-login endpoint
             login_url = f"{MYTRIPS_API_BASEURL}/auth/app-login"
 
-            logging.info(f"Attempting login to MyTrips API: {login_url}")
-            logging.info(f"Email: {credentials.email}")
+            # SECURITY: Only log sensitive data in debug mode
+            if DEBUG_MODE:
+                logging.debug(f"Attempting login to MyTrips API: {login_url}")
+                logging.debug(f"Email: {credentials.email}")
+            else:
+                # Log request ID or non-sensitive identifier instead
+                logging.info(f"Attempting login to MyTrips API")
 
             response = await client.post(
                 login_url,
@@ -279,8 +290,12 @@ async def app_login(credentials: AppLoginRequest):
                 }
             )
 
-            logging.info(f"MyTrips API response status: {response.status_code}")
-            logging.info(f"MyTrips API response body: {response.text[:500]}")  # First 500 chars
+            # SECURITY: Only log response body in debug mode (may contain tokens)
+            if DEBUG_MODE:
+                logging.debug(f"MyTrips API response status: {response.status_code}")
+                logging.debug(f"MyTrips API response body: {response.text[:500]}")
+            else:
+                logging.info(f"MyTrips API response status: {response.status_code}")
 
             # Check response status
             if response.status_code == 200:
@@ -737,11 +752,26 @@ async def get_route_history(
             timestamps=timestamps
         )
 
+# SECURITY: Configure CORS with restrictive defaults
+# CORS_ORIGINS should be a comma-separated list of allowed origins
+cors_origins_str = os.environ.get('CORS_ORIGINS', '')
+if not cors_origins_str:
+    # Default to localhost for development
+    cors_origins = ['http://localhost:3000', 'http://localhost:5173']
+    logging.warning("⚠️  CORS_ORIGINS not set - using development defaults. Set CORS_ORIGINS in production!")
+elif cors_origins_str == '*':
+    logging.error("❌ CORS_ORIGINS='*' is insecure! Specify allowed origins explicitly.")
+    cors_origins = ['*']
+else:
+    cors_origins = [origin.strip() for origin in cors_origins_str.split(',')]
+
+logging.info(f"CORS allowed origins: {cors_origins}")
+
 # Add CORS middleware BEFORE including routes
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_origins=cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
