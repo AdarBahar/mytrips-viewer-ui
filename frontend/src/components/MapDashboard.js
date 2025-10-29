@@ -76,6 +76,87 @@ const generateCurlCommand = (method, url, headers, params = null, data = null) =
   return curl;
 };
 
+// Session management functions
+const createSession = async (username, debugMode = false) => {
+  try {
+    const sessionData = {
+      user: username,
+      duration: 3600 // 1 hour session
+    };
+
+    if (debugMode) {
+      console.group('🔐 API Call: Create JWT Session');
+      console.log('📤 POST', `${LOC_API_BASEURL}/live/session`);
+      console.log('📤 Body:', sessionData);
+      console.log('📤 Headers: [REDACTED]');
+      console.groupEnd();
+    }
+
+    const response = await axios.post(
+      `${LOC_API_BASEURL}/live/session`,
+      sessionData,
+      {
+        headers: {
+          'Authorization': `Bearer ${LOC_API_TOKEN}`,
+          'X-API-Token': LOC_API_TOKEN,
+          'Accept': 'application/json',
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    if (debugMode) {
+      console.group('🔐 API Response: Create JWT Session');
+      console.log('📥 Status:', response.status);
+      console.log('📥 Session ID:', response.data?.session_id);
+      console.log('📥 Expires:', response.data?.expires_at);
+      console.groupEnd();
+    }
+
+    if (response.data?.status === 'success' && response.data?.token) {
+      return {
+        token: response.data.token,
+        sessionId: response.data.session_id,
+        expiresAt: response.data.expires_at
+      };
+    }
+
+    throw new Error('Invalid session response');
+  } catch (error) {
+    console.error('Failed to create session:', error);
+    throw error;
+  }
+};
+
+const revokeSession = async (sessionId, debugMode = false) => {
+  try {
+    if (!sessionId) return;
+
+    if (debugMode) {
+      console.group('🔐 API Call: Revoke Session');
+      console.log('📤 DELETE', `${LOC_API_BASEURL}/live/session/${sessionId}`);
+      console.groupEnd();
+    }
+
+    await axios.delete(
+      `${LOC_API_BASEURL}/live/session/${sessionId}`,
+      {
+        headers: {
+          'Authorization': `Bearer ${LOC_API_TOKEN}`,
+          'X-API-Token': LOC_API_TOKEN,
+          'Accept': 'application/json'
+        }
+      }
+    );
+
+    if (debugMode) {
+      console.log('✅ Session revoked successfully');
+    }
+  } catch (error) {
+    console.error('Failed to revoke session:', error);
+  }
+};
+
 export default function MapDashboard({ user, onLogout }) {
   const [routes, setRoutes] = useState([]);
   const [users, setUsers] = useState([]);
@@ -86,17 +167,27 @@ export default function MapDashboard({ user, onLogout }) {
   const [loading, setLoading] = useState(true);
   const [isLiveTracking, setIsLiveTracking] = useState(true); // Track current location by default
   const [isMinimized, setIsMinimized] = useState(false); // Control panel minimize state
-  const [streamCursor, setStreamCursor] = useState(0); // Cursor for live stream polling
+  const [streamCursor, setStreamCursor] = useState(0); // Cursor for live stream polling (legacy, kept for fallback)
   const [timeRange, setTimeRange] = useState('last_24_hours'); // Time range for history
   const [historyOffset, setHistoryOffset] = useState(0); // Pagination offset
   const [historyTotal, setHistoryTotal] = useState(0); // Total history records
   const [debugMode, setDebugMode] = useState(false); // Debug mode toggle
+
+  // Enhanced streaming state
+  const [jwtToken, setJwtToken] = useState(null); // JWT session token
+  const [sessionId, setSessionId] = useState(null); // Session ID for revocation
+  const [sessionExpiry, setSessionExpiry] = useState(null); // Session expiry timestamp
+  const [sseConnected, setSseConnected] = useState(false); // SSE connection status
+  const [sseError, setSseError] = useState(null); // SSE error message
+  const [dwellDriveSegments, setDwellDriveSegments] = useState(null); // Dwell/drive analytics
 
   const mapRef = useRef(null);
   const googleMapRef = useRef(null);
   const plannedPolylineRef = useRef(null);
   const actualPolylineRef = useRef(null);
   const markerRef = useRef(null);
+  const eventSourceRef = useRef(null); // SSE EventSource reference
+  const sessionRefreshTimerRef = useRef(null); // Session refresh timer
 
   const token = localStorage.getItem('token');
 
@@ -310,17 +401,18 @@ export default function MapDashboard({ user, onLogout }) {
         let total;
 
         if (isRecentHistory) {
-          // Use /live/history.php for recent data (≤24 hours)
+          // Use /live/history.php for recent data (≤24 hours) with dwell/drive analytics
           const duration = timeRange === 'last_hour' ? 3600 : 86400;
           const historyParams = {
             user: username,
             duration: duration,
             limit: 1000,
-            offset: historyOffset
+            offset: historyOffset,
+            segments: 'true' // 🆕 Request dwell/drive analytics
           };
 
           if (debugMode) {
-            console.group('🌐 API Call: Fetch Route History (Cache)');
+            console.group('🌐 API Call: Fetch Route History (Cache + Analytics)');
             console.log('📤 CURL Command:');
             console.log(generateCurlCommand('GET', `${LOC_API_BASEURL}/live/history.php`, locationApiHeaders, historyParams));
             console.groupEnd();
@@ -332,12 +424,15 @@ export default function MapDashboard({ user, onLogout }) {
           });
 
           if (debugMode) {
-            console.group('🌐 API Response: Fetch Route History (Cache)');
+            console.group('🌐 API Response: Fetch Route History (Cache + Analytics)');
             console.log('📥 Status:', response.status);
             console.log('📥 Response Data:', response.data);
             if (response.data?.data?.points) {
               console.log('📊 Points Count:', response.data.data.points.length);
               console.log('📊 Total Available:', response.data.data.total);
+            }
+            if (response.data?.data?.segments) {
+              console.log('📊 Segments:', response.data.data.segments);
             }
             console.groupEnd();
           }
@@ -345,6 +440,15 @@ export default function MapDashboard({ user, onLogout }) {
           if (response.data?.status === "success" && response.data?.data?.points) {
             points = response.data.data.points;
             total = response.data.data.total || points.length;
+
+            // 🆕 Store dwell/drive segments for analytics
+            if (response.data.data.segments) {
+              setDwellDriveSegments(response.data.data.segments);
+
+              if (debugMode) {
+                console.log('✅ Dwell/Drive segments loaded:', response.data.data.segments);
+              }
+            }
           }
         } else {
           // Use /locations.php for older data (>24 hours or all time)
@@ -527,76 +631,184 @@ export default function MapDashboard({ user, onLogout }) {
     initializeLiveTracking();
   }, [selectedUser, isLiveTracking, users, debugMode]); // Include all dependencies
 
-  // Poll for real-time location updates using stream endpoint
+  // Create/refresh JWT session when user is selected for live tracking
   useEffect(() => {
-    if (!selectedUser || !isLiveTracking || streamCursor === 0) {
+    if (!selectedUser || !isLiveTracking) {
+      // Clean up session when switching away from live tracking
+      if (sessionId) {
+        revokeSession(sessionId, debugMode);
+        setSessionId(null);
+        setJwtToken(null);
+        setSessionExpiry(null);
+      }
       return;
     }
 
-    const pollLocationStream = async () => {
+    const setupSession = async () => {
       try {
-        // Get username from selectedUser
         const username = users.find(u => u.id === selectedUser)?.name || selectedUser;
+        const session = await createSession(username, debugMode);
 
-        const streamParams = {
-          user: username,
-          since: streamCursor
-        };
-
-        if (debugMode) {
-          console.group('🌐 API Call: Poll Live Stream');
-          console.log('📤 CURL Command:');
-          console.log(generateCurlCommand('GET', `${LOC_API_BASEURL}/live/stream.php`, locationApiHeaders, streamParams));
-          console.groupEnd();
-        }
-
-        // Use Location API /live/stream.php for real-time updates
-        const response = await axios.get(`${LOC_API_BASEURL}/live/stream.php`, {
-          params: streamParams,
-          headers: locationApiHeaders
-        });
+        setJwtToken(session.token);
+        setSessionId(session.sessionId);
+        setSessionExpiry(new Date(session.expiresAt).getTime());
 
         if (debugMode) {
-          console.group('🌐 API Response: Poll Live Stream');
-          console.log('📥 Status:', response.status);
-          console.log('📥 Response Data:', response.data);
-          if (response.data?.data?.points) {
-            console.log('📊 New Points:', response.data.data.points.length);
-            console.log('📊 New Cursor:', response.data.data.cursor);
-          }
-          console.groupEnd();
+          console.log('✅ JWT session created:', {
+            sessionId: session.sessionId,
+            expiresAt: session.expiresAt
+          });
         }
 
-        if (response.data?.status === "success" && response.data?.data?.points?.length > 0) {
-          const points = response.data.data.points;
-          const latestPoint = points[points.length - 1]; // Get most recent point
-
-          const locationData = {
-            lat: parseFloat(latestPoint.latitude),
-            lng: parseFloat(latestPoint.longitude),
-            speed: latestPoint.speed,
-            timestamp: latestPoint.server_time,
-            accuracy: latestPoint.accuracy
-          };
-
-          if (debugMode) {
-            console.log('✅ Updating current location:', locationData);
-          }
-
-          setCurrentLocation(locationData);
-
-          // Update cursor for next poll
-          setStreamCursor(response.data.data.cursor);
-        }
+        toast.success('Streaming session created');
       } catch (error) {
-        console.error('Failed to fetch location stream:', error);
+        console.error('Failed to create session:', error);
+        toast.error('Failed to create streaming session');
+        setSseError('Session creation failed');
       }
     };
 
-    const interval = setInterval(pollLocationStream, 3000); // Poll every 3 seconds
+    setupSession();
 
-    return () => clearInterval(interval);
-  }, [selectedUser, isLiveTracking, streamCursor, users, debugMode]); // Include all dependencies
+    // Cleanup on unmount or user change
+    return () => {
+      if (sessionRefreshTimerRef.current) {
+        clearTimeout(sessionRefreshTimerRef.current);
+      }
+    };
+  }, [selectedUser, isLiveTracking, users, debugMode]);
+
+  // Auto-refresh session before expiry
+  useEffect(() => {
+    if (!sessionExpiry || !selectedUser || !isLiveTracking) {
+      return;
+    }
+
+    const now = Date.now();
+    const timeUntilExpiry = sessionExpiry - now;
+    const refreshTime = timeUntilExpiry - (5 * 60 * 1000); // Refresh 5 minutes before expiry
+
+    if (refreshTime > 0) {
+      sessionRefreshTimerRef.current = setTimeout(async () => {
+        try {
+          const username = users.find(u => u.id === selectedUser)?.name || selectedUser;
+          const session = await createSession(username, debugMode);
+
+          setJwtToken(session.token);
+          setSessionId(session.sessionId);
+          setSessionExpiry(new Date(session.expiresAt).getTime());
+
+          if (debugMode) {
+            console.log('✅ JWT session refreshed');
+          }
+
+          toast.success('Session refreshed');
+        } catch (error) {
+          console.error('Failed to refresh session:', error);
+          toast.error('Session refresh failed');
+        }
+      }, refreshTime);
+    }
+
+    return () => {
+      if (sessionRefreshTimerRef.current) {
+        clearTimeout(sessionRefreshTimerRef.current);
+      }
+    };
+  }, [sessionExpiry, selectedUser, isLiveTracking, users, debugMode]);
+
+  // SSE streaming for real-time location updates
+  useEffect(() => {
+    if (!selectedUser || !isLiveTracking || !jwtToken) {
+      // Close existing SSE connection
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+        eventSourceRef.current = null;
+        setSseConnected(false);
+      }
+      return;
+    }
+
+    const username = users.find(u => u.id === selectedUser)?.name || selectedUser;
+    const sseUrl = `${LOC_API_BASEURL}/live/stream-sse.php?token=${jwtToken}&user=${encodeURIComponent(username)}`;
+
+    if (debugMode) {
+      console.group('📡 SSE: Connecting to stream');
+      console.log('📤 URL:', sseUrl.replace(jwtToken, '[REDACTED]'));
+      console.groupEnd();
+    }
+
+    const eventSource = new EventSource(sseUrl);
+    eventSourceRef.current = eventSource;
+
+    eventSource.onopen = () => {
+      setSseConnected(true);
+      setSseError(null);
+      if (debugMode) {
+        console.log('✅ SSE: Connected');
+      }
+      toast.success('Real-time streaming connected');
+    };
+
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+
+        if (debugMode) {
+          console.group('📡 SSE: Message received');
+          console.log('📥 Data:', data);
+          console.groupEnd();
+        }
+
+        // Handle different message types
+        if (data.type === 'location' && data.location) {
+          const locationData = {
+            lat: parseFloat(data.location.latitude),
+            lng: parseFloat(data.location.longitude),
+            speed: data.location.speed,
+            timestamp: data.location.server_time,
+            accuracy: data.location.accuracy,
+            battery: data.location.battery_level
+          };
+
+          if (debugMode) {
+            console.log('✅ SSE: Updating location:', locationData);
+          }
+
+          setCurrentLocation(locationData);
+        } else if (data.type === 'heartbeat') {
+          // Heartbeat to keep connection alive
+          if (debugMode) {
+            console.log('💓 SSE: Heartbeat');
+          }
+        }
+      } catch (error) {
+        console.error('Failed to parse SSE message:', error);
+      }
+    };
+
+    eventSource.onerror = (error) => {
+      console.error('SSE connection error:', error);
+      setSseConnected(false);
+      setSseError('Connection lost');
+
+      // EventSource will automatically reconnect
+      if (debugMode) {
+        console.log('🔄 SSE: Reconnecting...');
+      }
+    };
+
+    // Cleanup on unmount
+    return () => {
+      if (eventSource) {
+        eventSource.close();
+        setSseConnected(false);
+        if (debugMode) {
+          console.log('🔌 SSE: Disconnected');
+        }
+      }
+    };
+  }, [selectedUser, isLiveTracking, jwtToken, users, debugMode]);
 
   // Update marker for current location
   useEffect(() => {
@@ -657,6 +869,23 @@ export default function MapDashboard({ user, onLogout }) {
           <p className="text-xs text-slate-500 mt-2">
             {isLiveTracking ? 'Showing live location updates' : 'Showing route history'}
           </p>
+
+          {/* SSE Connection Status */}
+          {isLiveTracking && (
+            <div className="mt-3 pt-3 border-t border-slate-200">
+              <div className="flex items-center gap-2">
+                <div className={`h-2 w-2 rounded-full ${sseConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
+                <span className="text-xs text-slate-600">
+                  {sseConnected ? 'Real-time streaming active' : sseError || 'Connecting...'}
+                </span>
+              </div>
+              {jwtToken && (
+                <div className="text-xs text-slate-500 mt-1">
+                  Session expires: {sessionExpiry ? new Date(sessionExpiry).toLocaleTimeString() : 'N/A'}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -891,6 +1120,38 @@ export default function MapDashboard({ user, onLogout }) {
                   </div>
                 )}
               </div>
+
+              {/* Dwell/Drive Analytics */}
+              {dwellDriveSegments && dwellDriveSegments.length > 0 && (
+                <div className="mt-3 pt-3 border-t border-emerald-200">
+                  <h4 className="text-xs font-semibold text-slate-800 mb-2">Movement Analysis</h4>
+                  <div className="space-y-1 text-xs">
+                    {dwellDriveSegments.map((segment, index) => (
+                      <div key={index} className="flex items-center gap-2">
+                        {segment.type === 'drive' ? (
+                          <>
+                            <Navigation className="h-3 w-3 text-blue-600" />
+                            <span className="text-slate-700">
+                              Driving: {segment.distance?.toFixed(2)} km, {Math.round(segment.duration / 60)} min
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <MapPin className="h-3 w-3 text-orange-600" />
+                            <span className="text-slate-700">
+                              Stopped: {Math.round(segment.duration / 60)} min
+                            </span>
+                          </>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-2 text-xs text-slate-500">
+                    {dwellDriveSegments.filter(s => s.type === 'drive').length} driving segments,
+                    {' '}{dwellDriveSegments.filter(s => s.type === 'dwell').length} stops
+                  </div>
+                </div>
+              )}
 
               {/* Pagination Controls */}
               {historyTotal > routeHistory.count && (
