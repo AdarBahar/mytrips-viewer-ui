@@ -75,7 +75,7 @@ build:
 	@echo "📦 Creating deployment package..."
 	@TIMESTAMP=$$(date +%Y%m%d-%H%M%S); \
 	PACKAGE_NAME="mytrips-viewer-$$TIMESTAMP.tar.gz"; \
-	COPYFILE_DISABLE=1 tar -czf "$$PACKAGE_NAME" -C build --exclude='._*' --exclude='.DS_Store' --exclude='.Spotlight-V100' --exclude='.Trashes' . && \
+	COPYFILE_DISABLE=1 tar --exclude='._*' --exclude='.DS_Store' --exclude='__MACOSX' --exclude='.Spotlight-V100' --exclude='.Trashes' -czf "$$PACKAGE_NAME" -C build . && \
 	echo "✅ Build complete!" && \
 	echo "" && \
 	echo "📁 Build directory: ./build/" && \
