@@ -77,10 +77,14 @@ const generateCurlCommand = (method, url, headers, params = null, data = null) =
 };
 
 // Session management functions
-const createSession = async (username, debugMode = false) => {
+const createSession = async (userId, debugMode = false) => {
   try {
+    // Convert userId to number (API expects numeric user_id)
+    const numericUserId = parseInt(userId, 10);
+
     const sessionData = {
-      user: username,
+      user_id: numericUserId,
+      device_ids: [], // Empty array = all devices
       duration: 3600 // 1 hour session
     };
 
@@ -97,7 +101,6 @@ const createSession = async (username, debugMode = false) => {
       sessionData,
       {
         headers: {
-          'Authorization': `Bearer ${LOC_API_TOKEN}`,
           'X-API-Token': LOC_API_TOKEN,
           'Accept': 'application/json',
           'Content-Type': 'application/json'
@@ -112,12 +115,12 @@ const createSession = async (username, debugMode = false) => {
       console.groupEnd();
     }
 
-    // Check if response indicates success
-    if (response.data?.status === 'success' && response.data?.token) {
+    // Check if response indicates success (v2.1.0 format)
+    if (response.data?.status === 'success' && response.data?.data?.session_token) {
       return {
-        token: response.data.token,
-        sessionId: response.data.session_id,
-        expiresAt: response.data.expires_at
+        token: response.data.data.session_token,
+        sessionId: response.data.data.session_id,
+        expiresAt: response.data.data.expires_at
       };
     }
 
@@ -146,6 +149,9 @@ const createSession = async (username, debugMode = false) => {
     console.error('Failed to create session:', error);
     if (debugMode) {
       console.warn('⚠️ Falling back to polling mode due to error');
+      if (error.response?.data) {
+        console.warn('⚠️ Error response:', error.response.data);
+      }
     }
     return null; // Fall back to polling instead of throwing
   }
@@ -161,11 +167,10 @@ const revokeSession = async (sessionId, debugMode = false) => {
       console.groupEnd();
     }
 
-    await axios.delete(
+    const response = await axios.delete(
       `${LOC_API_BASEURL}/live/session.php/${sessionId}`,
       {
         headers: {
-          'Authorization': `Bearer ${LOC_API_TOKEN}`,
           'X-API-Token': LOC_API_TOKEN,
           'Accept': 'application/json'
         }
@@ -173,10 +178,13 @@ const revokeSession = async (sessionId, debugMode = false) => {
     );
 
     if (debugMode) {
-      console.log('✅ Session revoked successfully');
+      console.log('✅ Session revoked successfully:', response.data);
     }
   } catch (error) {
     console.error('Failed to revoke session:', error);
+    if (debugMode && error.response?.data) {
+      console.error('Error response:', error.response.data);
+    }
   }
 };
 
@@ -669,8 +677,8 @@ export default function MapDashboard({ user, onLogout }) {
     }
 
     const setupSession = async () => {
-      const username = users.find(u => u.id === selectedUser)?.name || selectedUser;
-      const session = await createSession(username, debugMode);
+      // Pass user ID (numeric) to createSession, not username
+      const session = await createSession(selectedUser, debugMode);
 
       // Check if SSE is available
       if (session === null) {
@@ -762,8 +770,8 @@ export default function MapDashboard({ user, onLogout }) {
       return;
     }
 
-    const username = users.find(u => u.id === selectedUser)?.name || selectedUser;
-    const sseUrl = `${LOC_API_BASEURL}/live/stream-sse.php?token=${jwtToken}&user=${encodeURIComponent(username)}`;
+    // API v2.1.0 only needs the token (user_id is in the JWT)
+    const sseUrl = `${LOC_API_BASEURL}/live/stream-sse.php?token=${jwtToken}`;
 
     if (debugMode) {
       console.group('📡 SSE: Connecting to stream');
@@ -774,51 +782,91 @@ export default function MapDashboard({ user, onLogout }) {
     const eventSource = new EventSource(sseUrl);
     eventSourceRef.current = eventSource;
 
-    eventSource.onopen = () => {
+    // Handle 'connected' event (API v2.1.0)
+    eventSource.addEventListener('connected', (event) => {
+      const data = JSON.parse(event.data);
       setSseConnected(true);
       setSseError(null);
       if (debugMode) {
-        console.log('✅ SSE: Connected');
+        console.log('✅ SSE: Connected:', data);
       }
       toast.success('Real-time streaming connected');
-    };
+    });
 
-    eventSource.onmessage = (event) => {
+    // Handle 'loc' event (location update)
+    eventSource.addEventListener('loc', (event) => {
       try {
-        const data = JSON.parse(event.data);
+        const location = JSON.parse(event.data);
 
         if (debugMode) {
-          console.group('📡 SSE: Message received');
-          console.log('📥 Data:', data);
+          console.group('📡 SSE: Location update');
+          console.log('📥 Data:', location);
           console.groupEnd();
         }
 
-        // Handle different message types
-        if (data.type === 'location' && data.location) {
-          const locationData = {
-            lat: parseFloat(data.location.latitude),
-            lng: parseFloat(data.location.longitude),
-            speed: data.location.speed,
-            timestamp: data.location.server_time,
-            accuracy: data.location.accuracy,
-            battery: data.location.battery_level
-          };
+        const lat = parseFloat(location.latitude);
+        const lng = parseFloat(location.longitude);
 
-          if (debugMode) {
-            console.log('✅ SSE: Updating location:', locationData);
-          }
+        // Validate coordinates
+        if (isNaN(lat) || isNaN(lng)) {
+          console.warn('Invalid coordinates in SSE location:', location);
+          return;
+        }
 
-          setCurrentLocation(locationData);
-        } else if (data.type === 'heartbeat') {
-          // Heartbeat to keep connection alive
-          if (debugMode) {
-            console.log('💓 SSE: Heartbeat');
-          }
+        const locationData = {
+          lat,
+          lng,
+          speed: location.speed,
+          timestamp: location.server_time,
+          accuracy: location.accuracy,
+          battery: location.battery_level
+        };
+
+        if (debugMode) {
+          console.log('✅ SSE: Updating location:', locationData);
+        }
+
+        setCurrentLocation(locationData);
+      } catch (error) {
+        console.error('Failed to parse SSE location:', error);
+      }
+    });
+
+    // Handle 'no_change' event (heartbeat)
+    eventSource.addEventListener('no_change', (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (debugMode) {
+          console.log('💓 SSE: Heartbeat:', data);
         }
       } catch (error) {
-        console.error('Failed to parse SSE message:', error);
+        console.error('Failed to parse SSE heartbeat:', error);
       }
-    };
+    });
+
+    // Handle 'bye' event (connection closing)
+    eventSource.addEventListener('bye', (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        console.log('👋 SSE: Connection closing:', data);
+        setSseConnected(false);
+        setSseError(data.message || 'Session ended');
+      } catch (error) {
+        console.error('Failed to parse SSE bye:', error);
+      }
+    });
+
+    // Handle 'error' event
+    eventSource.addEventListener('error', (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        console.error('❌ SSE: Error event:', data);
+        setSseError(data.message || 'Stream error');
+      } catch (error) {
+        // Error event might not have data
+        console.error('SSE error event:', event);
+      }
+    });
 
     eventSource.onerror = (error) => {
       console.error('SSE connection error:', error);
