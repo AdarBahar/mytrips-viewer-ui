@@ -2,10 +2,10 @@
   MYTRIPS VIEWER - READY FOR IMMEDIATE DEPLOYMENT
 ================================================================================
 
-📦 Package:  mytrips-viewer-20251030-095644.tar.gz
+📦 Package:  mytrips-viewer-20251030-124746.tar.gz
 📏 Size:     1.6 MB
 🌿 Branch:   code-review/non-backend-fixes
-📝 Commit:   97124d0
+📝 Commit:   4ea2731
 🚀 Status:   ✅ READY FOR PRODUCTION
 
 ================================================================================
@@ -34,7 +34,7 @@
 When User Starts Live Tracking:
 
 1. **Try SSE First:**
-   - Attempt to create JWT session: POST /live/session
+   - Attempt to create JWT session: POST /live/session.php
    
 2. **If SSE Available (200 OK):**
    ✅ Create JWT session
@@ -81,7 +81,7 @@ When User Starts Live Tracking:
 ================================================================================
 
 1. Upload package:
-   scp mytrips-viewer-20251030-095644.tar.gz user@www.bahar.co.il:/tmp/
+   scp mytrips-viewer-20251030-124746.tar.gz user@www.bahar.co.il:/tmp/
 
 2. SSH to server:
    ssh user@www.bahar.co.il
@@ -93,13 +93,13 @@ When User Starts Live Tracking:
 4. Create new directory and extract:
    mkdir mytrips-viewer
    cd mytrips-viewer
-   tar -xzf /tmp/mytrips-viewer-20251030-095644.tar.gz
+   tar -xzf /tmp/mytrips-viewer-20251030-124746.tar.gz
 
 5. Set permissions:
    chmod -R 755 .
 
 6. Clean up:
-   rm /tmp/mytrips-viewer-20251030-095644.tar.gz
+   rm /tmp/mytrips-viewer-20251030-124746.tar.gz
 
 7. Test:
    https://www.bahar.co.il/mytrips-viewer/
@@ -160,12 +160,12 @@ Fix:   - Check browser console for errors
 When you're ready to deploy the SSE endpoints to the Location API backend:
 
 1. Deploy these endpoints:
-   - POST /live/session
+   - POST /live/session.php
    - GET /live/stream-sse.php
-   - DELETE /live/session/{id}
+   - DELETE /live/session.php/{id}
 
 2. Test endpoints:
-   curl -X POST https://www.bahar.co.il/location/api/live/session \
+   curl -X POST https://www.bahar.co.il/location/api/live/session.php \
      -H "X-API-Token: YOUR_TOKEN" \
      -H "Content-Type: application/json" \
      -d '{"user":"test","duration":3600}'
@@ -211,13 +211,15 @@ When you're ready to deploy the SSE endpoints to the Location API backend:
   📦 PACKAGE DETAILS
 ================================================================================
 
-Build Hash:     main.4e41ed7f.js
+Build Hash:     main.368f9754.js
 CSS Hash:       main.98ad1936.css
 Total Files:    29 (clean, no Mac metadata)
-Gzipped JS:     142.97 KB
+Gzipped JS:     142.98 KB
 Gzipped CSS:    9.49 KB
 
 Git Commits:
+  4ea2731 - Fix: Add .php extension to session endpoints
+  0d83333 - Add deployment guide for immediate production deployment
   97124d0 - Add graceful fallback to polling when SSE endpoints are unavailable
   6c88a63 - Add deployment documentation for enhanced streaming package
   c51cd0b - Implement enhanced real-time streaming with SSE and JWT sessions
