@@ -865,10 +865,23 @@ export default function MapDashboard({ user, onLogout }) {
           headers: locationApiHeaders
         });
 
+        if (debugMode) {
+          console.log('📍 Polling response:', response.data);
+        }
+
         if (response.data?.status === "success" && response.data?.data) {
+          const lat = parseFloat(response.data.data.latitude);
+          const lng = parseFloat(response.data.data.longitude);
+
+          // Validate coordinates before setting
+          if (isNaN(lat) || isNaN(lng)) {
+            console.warn('Invalid coordinates in polling response:', response.data.data);
+            return;
+          }
+
           const locationData = {
-            lat: parseFloat(response.data.data.latitude),
-            lng: parseFloat(response.data.data.longitude),
+            lat,
+            lng,
             speed: response.data.data.speed,
             timestamp: response.data.data.server_time,
             accuracy: response.data.data.accuracy,
@@ -880,9 +893,14 @@ export default function MapDashboard({ user, onLogout }) {
           if (debugMode) {
             console.log('📍 Polling: Location updated:', locationData);
           }
+        } else if (debugMode) {
+          console.warn('Polling: No location data in response');
         }
       } catch (error) {
         console.error('Polling error:', error);
+        if (debugMode) {
+          console.error('Polling error details:', error.response?.data);
+        }
       }
     };
 
@@ -904,6 +922,15 @@ export default function MapDashboard({ user, onLogout }) {
   useEffect(() => {
     if (!googleMapRef.current || !currentLocation) return;
 
+    // Validate that we have valid coordinates
+    const lat = parseFloat(currentLocation.lat);
+    const lng = parseFloat(currentLocation.lng);
+
+    if (isNaN(lat) || isNaN(lng)) {
+      console.warn('Invalid location coordinates:', currentLocation);
+      return;
+    }
+
     if (markerRef.current) {
       markerRef.current.map = null;
     }
@@ -918,14 +945,14 @@ export default function MapDashboard({ user, onLogout }) {
     markerElement.style.boxShadow = '0 2px 6px rgba(0,0,0,0.3)';
 
     markerRef.current = new window.google.maps.marker.AdvancedMarkerElement({
-      position: { lat: currentLocation.lat, lng: currentLocation.lng },
+      position: { lat, lng },
       map: googleMapRef.current,
       content: markerElement,
       title: 'Current Location'
     });
 
     // Pan to current location
-    googleMapRef.current.panTo({ lat: currentLocation.lat, lng: currentLocation.lng });
+    googleMapRef.current.panTo({ lat, lng });
   }, [currentLocation]);
 
   return (
