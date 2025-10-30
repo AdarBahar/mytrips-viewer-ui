@@ -216,6 +216,26 @@ const reverseGeocode = async (lat, lng) => {
   }
 };
 
+// Format time ago (e.g., "5 minutes ago", "1:04 hours ago")
+const formatTimeAgo = (timestamp) => {
+  if (!timestamp) return '';
+
+  const now = new Date();
+  const then = new Date(timestamp);
+  const diffMs = now - then;
+  const diffMinutes = Math.floor(diffMs / 60000);
+
+  if (diffMinutes < 1) {
+    return 'just now';
+  } else if (diffMinutes < 60) {
+    return `${diffMinutes} minute${diffMinutes === 1 ? '' : 's'} ago`;
+  } else {
+    const hours = Math.floor(diffMinutes / 60);
+    const minutes = diffMinutes % 60;
+    return `${hours}:${minutes.toString().padStart(2, '0')} hours ago`;
+  }
+};
+
 export default function MapDashboard({ user, onLogout }) {
   const [routes, setRoutes] = useState([]);
   const [users, setUsers] = useState([]);
@@ -1100,7 +1120,12 @@ export default function MapDashboard({ user, onLogout }) {
                   </div>
                   <div className="flex items-center gap-1.5 text-slate-600">
                     <Clock className="h-3 w-3" />
-                    <span>{new Date(currentLocation.timestamp).toLocaleTimeString()}</span>
+                    <span>
+                      {new Date(currentLocation.timestamp).toLocaleTimeString()}
+                      <span className="text-slate-500 ml-1">
+                        ({formatTimeAgo(currentLocation.timestamp)})
+                      </span>
+                    </span>
                   </div>
                 </div>
               )}
@@ -1198,9 +1223,14 @@ export default function MapDashboard({ user, onLogout }) {
                         <span>{currentLocation.speed.toFixed(1)} km/h</span>
                       </div>
                     )}
-                    <div className="flex items-center gap-2 text-slate-700">
-                      <Clock className="h-3 w-3" />
-                      <span>{new Date(currentLocation.timestamp).toLocaleTimeString()}</span>
+                    <div className="flex items-start gap-2 text-slate-700">
+                      <Clock className="h-3 w-3 mt-0.5" />
+                      <div className="flex flex-col">
+                        <span>{new Date(currentLocation.timestamp).toLocaleTimeString()}</span>
+                        <span className="text-slate-500">
+                          {formatTimeAgo(currentLocation.timestamp)}
+                        </span>
+                      </div>
                     </div>
                     {currentLocation.accuracy && (
                       <div className="text-xs text-slate-500">
