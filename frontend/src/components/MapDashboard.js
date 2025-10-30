@@ -123,6 +123,14 @@ const createSession = async (username, debugMode = false) => {
 
     throw new Error('Invalid session response');
   } catch (error) {
+    // Check if endpoint doesn't exist (404) - fall back to polling
+    if (error.response?.status === 404) {
+      if (debugMode) {
+        console.warn('⚠️ SSE endpoints not available (404), will fall back to polling');
+      }
+      return null; // Signal to use polling instead
+    }
+
     console.error('Failed to create session:', error);
     throw error;
   }
@@ -180,6 +188,7 @@ export default function MapDashboard({ user, onLogout }) {
   const [sseConnected, setSseConnected] = useState(false); // SSE connection status
   const [sseError, setSseError] = useState(null); // SSE error message
   const [dwellDriveSegments, setDwellDriveSegments] = useState(null); // Dwell/drive analytics
+  const [sseAvailable, setSseAvailable] = useState(true); // SSE endpoints available (fallback to polling if false)
 
   const mapRef = useRef(null);
   const googleMapRef = useRef(null);
@@ -649,9 +658,21 @@ export default function MapDashboard({ user, onLogout }) {
         const username = users.find(u => u.id === selectedUser)?.name || selectedUser;
         const session = await createSession(username, debugMode);
 
+        // Check if SSE is available
+        if (session === null) {
+          // SSE endpoints not available, fall back to polling
+          setSseAvailable(false);
+          if (debugMode) {
+            console.log('⚠️ SSE not available, using polling mode');
+          }
+          toast.info('Using polling mode (SSE not available)');
+          return;
+        }
+
         setJwtToken(session.token);
         setSessionId(session.sessionId);
         setSessionExpiry(new Date(session.expiresAt).getTime());
+        setSseAvailable(true);
 
         if (debugMode) {
           console.log('✅ JWT session created:', {
@@ -665,6 +686,7 @@ export default function MapDashboard({ user, onLogout }) {
         console.error('Failed to create session:', error);
         toast.error('Failed to create streaming session');
         setSseError('Session creation failed');
+        setSseAvailable(false); // Fall back to polling on error
       }
     };
 
@@ -717,9 +739,9 @@ export default function MapDashboard({ user, onLogout }) {
     };
   }, [sessionExpiry, selectedUser, isLiveTracking, users, debugMode]);
 
-  // SSE streaming for real-time location updates
+  // SSE streaming for real-time location updates (only if SSE is available)
   useEffect(() => {
-    if (!selectedUser || !isLiveTracking || !jwtToken) {
+    if (!selectedUser || !isLiveTracking || !jwtToken || !sseAvailable) {
       // Close existing SSE connection
       if (eventSourceRef.current) {
         eventSourceRef.current.close();
@@ -808,7 +830,64 @@ export default function MapDashboard({ user, onLogout }) {
         }
       }
     };
-  }, [selectedUser, isLiveTracking, jwtToken, users, debugMode]);
+  }, [selectedUser, isLiveTracking, jwtToken, users, debugMode, sseAvailable]);
+
+  // Polling fallback when SSE is not available
+  useEffect(() => {
+    if (!selectedUser || !isLiveTracking || sseAvailable) {
+      // Don't poll if SSE is available or not in live tracking mode
+      return;
+    }
+
+    if (debugMode) {
+      console.log('🔄 Starting polling mode (SSE not available)');
+    }
+
+    const username = users.find(u => u.id === selectedUser)?.name || selectedUser;
+
+    const pollLocation = async () => {
+      try {
+        const response = await axios.get(`${LOC_API_BASEURL}/live/latest.php`, {
+          params: {
+            user: username
+          },
+          headers: locationApiHeaders
+        });
+
+        if (response.data?.status === "success" && response.data?.data) {
+          const locationData = {
+            lat: parseFloat(response.data.data.latitude),
+            lng: parseFloat(response.data.data.longitude),
+            speed: response.data.data.speed,
+            timestamp: response.data.data.server_time,
+            accuracy: response.data.data.accuracy,
+            battery: response.data.data.battery_level
+          };
+
+          setCurrentLocation(locationData);
+
+          if (debugMode) {
+            console.log('📍 Polling: Location updated:', locationData);
+          }
+        }
+      } catch (error) {
+        console.error('Polling error:', error);
+      }
+    };
+
+    // Initial poll
+    pollLocation();
+
+    // Poll every 3 seconds
+    const pollInterval = setInterval(pollLocation, 3000);
+
+    return () => {
+      clearInterval(pollInterval);
+      if (debugMode) {
+        console.log('🔄 Polling stopped');
+      }
+    };
+  }, [selectedUser, isLiveTracking, sseAvailable, users, debugMode, LOC_API_BASEURL, locationApiHeaders]);
 
   // Update marker for current location
   useEffect(() => {
@@ -870,18 +949,34 @@ export default function MapDashboard({ user, onLogout }) {
             {isLiveTracking ? 'Showing live location updates' : 'Showing route history'}
           </p>
 
-          {/* SSE Connection Status */}
+          {/* Connection Status */}
           {isLiveTracking && (
             <div className="mt-3 pt-3 border-t border-slate-200">
               <div className="flex items-center gap-2">
-                <div className={`h-2 w-2 rounded-full ${sseConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
-                <span className="text-xs text-slate-600">
-                  {sseConnected ? 'Real-time streaming active' : sseError || 'Connecting...'}
-                </span>
+                {sseAvailable ? (
+                  <>
+                    <div className={`h-2 w-2 rounded-full ${sseConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
+                    <span className="text-xs text-slate-600">
+                      {sseConnected ? 'Real-time streaming active' : sseError || 'Connecting...'}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <div className="h-2 w-2 rounded-full bg-yellow-500 animate-pulse" />
+                    <span className="text-xs text-slate-600">
+                      Polling mode (3s interval)
+                    </span>
+                  </>
+                )}
               </div>
-              {jwtToken && (
+              {jwtToken && sseAvailable && (
                 <div className="text-xs text-slate-500 mt-1">
                   Session expires: {sessionExpiry ? new Date(sessionExpiry).toLocaleTimeString() : 'N/A'}
+                </div>
+              )}
+              {!sseAvailable && (
+                <div className="text-xs text-slate-400 mt-1">
+                  SSE not available on server
                 </div>
               )}
             </div>
