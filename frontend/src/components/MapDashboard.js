@@ -188,12 +188,41 @@ const revokeSession = async (sessionId, debugMode = false) => {
   }
 };
 
+// Reverse geocoding function to get address from coordinates
+const reverseGeocode = async (lat, lng) => {
+  try {
+    if (!window.google || !window.google.maps) {
+      console.warn('Google Maps not loaded yet');
+      return null;
+    }
+
+    const geocoder = new window.google.maps.Geocoder();
+    const latlng = { lat, lng };
+
+    return new Promise((resolve, reject) => {
+      geocoder.geocode({ location: latlng }, (results, status) => {
+        if (status === 'OK' && results && results[0]) {
+          // Get the formatted address
+          resolve(results[0].formatted_address);
+        } else {
+          console.warn('Geocoder failed:', status);
+          resolve(null);
+        }
+      });
+    });
+  } catch (error) {
+    console.error('Reverse geocoding error:', error);
+    return null;
+  }
+};
+
 export default function MapDashboard({ user, onLogout }) {
   const [routes, setRoutes] = useState([]);
   const [users, setUsers] = useState([]);
   const [selectedRoute, setSelectedRoute] = useState(null);
   const [selectedUser, setSelectedUser] = useState(null);
   const [currentLocation, setCurrentLocation] = useState(null);
+  const [currentAddress, setCurrentAddress] = useState(null); // Address from reverse geocoding
   const [routeHistory, setRouteHistory] = useState(null);
   const [loading, setLoading] = useState(true);
   const [isLiveTracking, setIsLiveTracking] = useState(true); // Track current location by default
@@ -1005,6 +1034,18 @@ export default function MapDashboard({ user, onLogout }) {
     googleMapRef.current.panTo({ lat, lng });
   }, [currentLocation]);
 
+  // Reverse geocode current location to get address
+  useEffect(() => {
+    if (!currentLocation || !window.google) return;
+
+    const fetchAddress = async () => {
+      const address = await reverseGeocode(currentLocation.lat, currentLocation.lng);
+      setCurrentAddress(address);
+    };
+
+    fetchAddress();
+  }, [currentLocation]);
+
   return (
     <div className="relative h-screen w-full">
       {/* Map Container */}
@@ -1019,7 +1060,7 @@ export default function MapDashboard({ user, onLogout }) {
 
       {/* Tracking Mode Switch - Top Right */}
       {selectedUser && (
-        <div className="absolute top-6 right-6 bg-white/95 backdrop-blur-md rounded-xl shadow-lg border border-slate-200 p-4 z-10">
+        <div className="absolute top-6 right-6 bg-white/95 backdrop-blur-md rounded-xl shadow-lg border border-slate-200 p-4 z-10 max-w-sm">
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
               <Radio className={`h-4 w-4 ${isLiveTracking ? 'text-red-500' : 'text-slate-400'}`} />
@@ -1067,6 +1108,39 @@ export default function MapDashboard({ user, onLogout }) {
                   SSE not available on server
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Live Location Info */}
+          {isLiveTracking && currentLocation && (
+            <div className="mt-3 pt-3 border-t border-slate-200">
+              <h4 className="text-xs font-semibold text-slate-800 mb-2 flex items-center gap-2">
+                <div className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
+                Live Location
+              </h4>
+              <div className="space-y-2 text-xs">
+                <div className="flex items-start gap-2 text-slate-700">
+                  <MapPin className="h-3 w-3 mt-0.5 flex-shrink-0" />
+                  <span className="break-words">
+                    {currentAddress || `${currentLocation.lat.toFixed(6)}, ${currentLocation.lng.toFixed(6)}`}
+                  </span>
+                </div>
+                {currentLocation.speed !== undefined && currentLocation.speed !== null && (
+                  <div className="flex items-center gap-2 text-slate-700">
+                    <Gauge className="h-3 w-3" />
+                    <span>{currentLocation.speed.toFixed(1)} km/h</span>
+                  </div>
+                )}
+                <div className="flex items-center gap-2 text-slate-700">
+                  <Clock className="h-3 w-3" />
+                  <span>{new Date(currentLocation.timestamp).toLocaleTimeString()}</span>
+                </div>
+                {currentLocation.accuracy && (
+                  <div className="text-xs text-slate-500">
+                    Accuracy: ±{currentLocation.accuracy}m
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -1238,32 +1312,6 @@ export default function MapDashboard({ user, onLogout }) {
                 {timeRange === 'last_week' && '🗄️ Full database query'}
                 {timeRange === 'last_month' && '🗄️ Full database query'}
                 {timeRange === 'all' && '🗄️ Full database query (all records)'}
-              </div>
-            </div>
-          )}
-
-          {/* Current Location Info (Live Tracking) */}
-          {isLiveTracking && currentLocation && (
-            <div className="mt-4 p-4 bg-gradient-to-br from-red-50 to-orange-50 rounded-xl border border-red-200">
-              <h3 className="text-sm font-semibold text-slate-800 mb-3 flex items-center gap-2">
-                <div className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
-                Live Location
-              </h3>
-              <div className="space-y-2 text-xs">
-                <div className="flex items-center gap-2 text-slate-700">
-                  <MapPin className="h-3 w-3" />
-                  <span>{currentLocation.lat.toFixed(6)}, {currentLocation.lng.toFixed(6)}</span>
-                </div>
-                {currentLocation.speed && (
-                  <div className="flex items-center gap-2 text-slate-700">
-                    <Gauge className="h-3 w-3" />
-                    <span>{currentLocation.speed.toFixed(1)} km/h</span>
-                  </div>
-                )}
-                <div className="flex items-center gap-2 text-slate-700">
-                  <Clock className="h-3 w-3" />
-                  <span>{new Date(currentLocation.timestamp).toLocaleTimeString()}</span>
-                </div>
               </div>
             </div>
           )}
