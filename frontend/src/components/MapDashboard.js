@@ -227,6 +227,7 @@ export default function MapDashboard({ user, onLogout }) {
   const [loading, setLoading] = useState(true);
   const [isLiveTracking, setIsLiveTracking] = useState(true); // Track current location by default
   const [isMinimized, setIsMinimized] = useState(false); // Control panel minimize state
+  const [isTrackingMinimized, setIsTrackingMinimized] = useState(false); // Track Current Location card minimize state
   const [streamCursor, setStreamCursor] = useState(0); // Cursor for live stream polling (legacy, kept for fallback)
   const [timeRange, setTimeRange] = useState('last_24_hours'); // Time range for history
   const [historyOffset, setHistoryOffset] = useState(0); // Pagination offset
@@ -1060,88 +1061,156 @@ export default function MapDashboard({ user, onLogout }) {
 
       {/* Tracking Mode Switch - Top Right */}
       {selectedUser && (
-        <div className="absolute top-6 right-6 bg-white/95 backdrop-blur-md rounded-xl shadow-lg border border-slate-200 p-4 z-10 max-w-sm">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2">
-              <Radio className={`h-4 w-4 ${isLiveTracking ? 'text-red-500' : 'text-slate-400'}`} />
-              <span className="text-sm font-medium text-slate-700">
-                Track Current Location
-              </span>
-            </div>
-            <Switch
-              checked={isLiveTracking}
-              onCheckedChange={setIsLiveTracking}
-              className="data-[state=checked]:bg-red-500"
-            />
-          </div>
-          <p className="text-xs text-slate-500 mt-2">
-            {isLiveTracking ? 'Showing live location updates' : 'Showing route history'}
-          </p>
-
-          {/* Connection Status */}
-          {isLiveTracking && (
-            <div className="mt-3 pt-3 border-t border-slate-200">
-              <div className="flex items-center gap-2">
-                {sseAvailable ? (
-                  <>
-                    <div className={`h-2 w-2 rounded-full ${sseConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
-                    <span className="text-xs text-slate-600">
-                      {sseConnected ? 'Real-time streaming active' : sseError || 'Connecting...'}
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <div className="h-2 w-2 rounded-full bg-yellow-500 animate-pulse" />
-                    <span className="text-xs text-slate-600">
-                      Polling mode (3s interval)
-                    </span>
-                  </>
-                )}
+        <div className={`absolute top-6 right-6 bg-white/95 backdrop-blur-md rounded-xl shadow-lg border border-slate-200 z-10 transition-all duration-300 ${isTrackingMinimized ? 'p-3' : 'p-4 max-w-sm'}`}>
+          {/* Minimized View */}
+          {isTrackingMinimized ? (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Radio className={`h-3 w-3 ${isLiveTracking ? 'text-red-500' : 'text-slate-400'}`} />
+                  <span className="text-xs font-medium text-slate-700">
+                    {isLiveTracking ? 'Current Location' : 'Route History'}
+                  </span>
+                  <Switch
+                    checked={isLiveTracking}
+                    onCheckedChange={setIsLiveTracking}
+                    className="data-[state=checked]:bg-red-500 scale-75"
+                  />
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setIsTrackingMinimized(false)}
+                  className="h-6 w-6 p-0 hover:bg-slate-100"
+                >
+                  <Maximize2 className="h-3 w-3" />
+                </Button>
               </div>
-              {jwtToken && sseAvailable && (
-                <div className="text-xs text-slate-500 mt-1">
-                  Session expires: {sessionExpiry ? new Date(sessionExpiry).toLocaleTimeString() : 'N/A'}
-                </div>
-              )}
-              {!sseAvailable && (
-                <div className="text-xs text-slate-400 mt-1">
-                  SSE not available on server
+
+              {isLiveTracking && currentLocation && (
+                <div className="space-y-1 text-xs">
+                  <div className="font-medium text-slate-800">
+                    {users.find(u => u.id === selectedUser)?.name || 'Unknown User'}
+                  </div>
+                  <div className="flex items-start gap-1.5 text-slate-700">
+                    <MapPin className="h-3 w-3 mt-0.5 flex-shrink-0" />
+                    <span className="break-words line-clamp-2">
+                      {currentAddress || `${currentLocation.lat.toFixed(6)}, ${currentLocation.lng.toFixed(6)}`}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-slate-600">
+                    <Clock className="h-3 w-3" />
+                    <span>{new Date(currentLocation.timestamp).toLocaleTimeString()}</span>
+                  </div>
                 </div>
               )}
             </div>
-          )}
-
-          {/* Live Location Info */}
-          {isLiveTracking && currentLocation && (
-            <div className="mt-3 pt-3 border-t border-slate-200">
-              <h4 className="text-xs font-semibold text-slate-800 mb-2 flex items-center gap-2">
-                <div className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
-                Live Location
-              </h4>
-              <div className="space-y-2 text-xs">
-                <div className="flex items-start gap-2 text-slate-700">
-                  <MapPin className="h-3 w-3 mt-0.5 flex-shrink-0" />
-                  <span className="break-words">
-                    {currentAddress || `${currentLocation.lat.toFixed(6)}, ${currentLocation.lng.toFixed(6)}`}
+          ) : (
+            /* Maximized View */
+            <>
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Radio className={`h-4 w-4 ${isLiveTracking ? 'text-red-500' : 'text-slate-400'}`} />
+                  <span className="text-sm font-medium text-slate-700">
+                    Track Current Location
                   </span>
                 </div>
-                {currentLocation.speed !== undefined && currentLocation.speed !== null && (
-                  <div className="flex items-center gap-2 text-slate-700">
-                    <Gauge className="h-3 w-3" />
-                    <span>{currentLocation.speed.toFixed(1)} km/h</span>
-                  </div>
-                )}
-                <div className="flex items-center gap-2 text-slate-700">
-                  <Clock className="h-3 w-3" />
-                  <span>{new Date(currentLocation.timestamp).toLocaleTimeString()}</span>
+                <div className="flex items-center gap-1">
+                  <Switch
+                    checked={isLiveTracking}
+                    onCheckedChange={setIsLiveTracking}
+                    className="data-[state=checked]:bg-red-500"
+                  />
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setIsTrackingMinimized(true)}
+                    className="h-7 w-7 p-0 hover:bg-slate-100 ml-1"
+                  >
+                    <Minimize2 className="h-3.5 w-3.5" />
+                  </Button>
                 </div>
-                {currentLocation.accuracy && (
-                  <div className="text-xs text-slate-500">
-                    Accuracy: ±{currentLocation.accuracy}m
-                  </div>
-                )}
               </div>
-            </div>
+
+              <p className="text-xs text-slate-500 mt-2">
+                {isLiveTracking ? 'Showing live location updates' : 'Showing route history'}
+              </p>
+
+              {/* User Name */}
+              {isLiveTracking && (
+                <div className="mt-3 pt-3 border-t border-slate-200">
+                  <div className="text-sm font-semibold text-slate-800">
+                    {users.find(u => u.id === selectedUser)?.name || 'Unknown User'}
+                  </div>
+                </div>
+              )}
+
+              {/* Connection Status */}
+              {isLiveTracking && (
+                <div className="mt-3 pt-3 border-t border-slate-200">
+                  <div className="flex items-center gap-2">
+                    {sseAvailable ? (
+                      <>
+                        <div className={`h-2 w-2 rounded-full ${sseConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
+                        <span className="text-xs text-slate-600">
+                          {sseConnected ? 'Real-time streaming active' : sseError || 'Connecting...'}
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <div className="h-2 w-2 rounded-full bg-yellow-500 animate-pulse" />
+                        <span className="text-xs text-slate-600">
+                          Polling mode (3s interval)
+                        </span>
+                      </>
+                    )}
+                  </div>
+                  {jwtToken && sseAvailable && (
+                    <div className="text-xs text-slate-500 mt-1">
+                      Session expires: {sessionExpiry ? new Date(sessionExpiry).toLocaleTimeString() : 'N/A'}
+                    </div>
+                  )}
+                  {!sseAvailable && (
+                    <div className="text-xs text-slate-400 mt-1">
+                      SSE not available on server
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Live Location Info */}
+              {isLiveTracking && currentLocation && (
+                <div className="mt-3 pt-3 border-t border-slate-200">
+                  <h4 className="text-xs font-semibold text-slate-800 mb-2 flex items-center gap-2">
+                    <div className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
+                    Live Location
+                  </h4>
+                  <div className="space-y-2 text-xs">
+                    <div className="flex items-start gap-2 text-slate-700">
+                      <MapPin className="h-3 w-3 mt-0.5 flex-shrink-0" />
+                      <span className="break-words">
+                        {currentAddress || `${currentLocation.lat.toFixed(6)}, ${currentLocation.lng.toFixed(6)}`}
+                      </span>
+                    </div>
+                    {currentLocation.speed !== undefined && currentLocation.speed !== null && (
+                      <div className="flex items-center gap-2 text-slate-700">
+                        <Gauge className="h-3 w-3" />
+                        <span>{currentLocation.speed.toFixed(1)} km/h</span>
+                      </div>
+                    )}
+                    <div className="flex items-center gap-2 text-slate-700">
+                      <Clock className="h-3 w-3" />
+                      <span>{new Date(currentLocation.timestamp).toLocaleTimeString()}</span>
+                    </div>
+                    {currentLocation.accuracy && (
+                      <div className="text-xs text-slate-500">
+                        Accuracy: ±{currentLocation.accuracy}m
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
       )}
