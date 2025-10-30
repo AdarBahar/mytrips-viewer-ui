@@ -86,14 +86,14 @@ const createSession = async (username, debugMode = false) => {
 
     if (debugMode) {
       console.group('🔐 API Call: Create JWT Session');
-      console.log('📤 POST', `${LOC_API_BASEURL}/live/session`);
+      console.log('📤 POST', `${LOC_API_BASEURL}/live/session.php`);
       console.log('📤 Body:', sessionData);
       console.log('📤 Headers: [REDACTED]');
       console.groupEnd();
     }
 
     const response = await axios.post(
-      `${LOC_API_BASEURL}/live/session`,
+      `${LOC_API_BASEURL}/live/session.php`,
       sessionData,
       {
         headers: {
@@ -142,12 +142,12 @@ const revokeSession = async (sessionId, debugMode = false) => {
 
     if (debugMode) {
       console.group('🔐 API Call: Revoke Session');
-      console.log('📤 DELETE', `${LOC_API_BASEURL}/live/session/${sessionId}`);
+      console.log('📤 DELETE', `${LOC_API_BASEURL}/live/session.php/${sessionId}`);
       console.groupEnd();
     }
 
     await axios.delete(
-      `${LOC_API_BASEURL}/live/session/${sessionId}`,
+      `${LOC_API_BASEURL}/live/session.php/${sessionId}`,
       {
         headers: {
           'Authorization': `Bearer ${LOC_API_TOKEN}`,
