@@ -869,23 +869,25 @@ export default function MapDashboard({ user, onLogout }) {
           console.log('📍 Polling response:', response.data);
         }
 
-        if (response.data?.status === "success" && response.data?.data) {
-          const lat = parseFloat(response.data.data.latitude);
-          const lng = parseFloat(response.data.data.longitude);
+        // Handle response structure: { locations: [...], count: 1, ... }
+        if (response.data?.locations && Array.isArray(response.data.locations) && response.data.locations.length > 0) {
+          const location = response.data.locations[0]; // Get first (latest) location
+          const lat = parseFloat(location.latitude);
+          const lng = parseFloat(location.longitude);
 
           // Validate coordinates before setting
           if (isNaN(lat) || isNaN(lng)) {
-            console.warn('Invalid coordinates in polling response:', response.data.data);
+            console.warn('Invalid coordinates in polling response:', location);
             return;
           }
 
           const locationData = {
             lat,
             lng,
-            speed: response.data.data.speed,
-            timestamp: response.data.data.server_time,
-            accuracy: response.data.data.accuracy,
-            battery: response.data.data.battery_level
+            speed: location.speed,
+            timestamp: location.server_time,
+            accuracy: location.accuracy,
+            battery: location.battery_level
           };
 
           setCurrentLocation(locationData);
