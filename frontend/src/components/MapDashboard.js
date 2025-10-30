@@ -108,11 +108,11 @@ const createSession = async (username, debugMode = false) => {
     if (debugMode) {
       console.group('🔐 API Response: Create JWT Session');
       console.log('📥 Status:', response.status);
-      console.log('📥 Session ID:', response.data?.session_id);
-      console.log('📥 Expires:', response.data?.expires_at);
+      console.log('📥 Full Response:', response.data);
       console.groupEnd();
     }
 
+    // Check if response indicates success
     if (response.data?.status === 'success' && response.data?.token) {
       return {
         token: response.data.token,
@@ -121,7 +121,18 @@ const createSession = async (username, debugMode = false) => {
       };
     }
 
-    throw new Error('Invalid session response');
+    // If response indicates error or feature not available, fall back to polling
+    if (response.data?.status === 'error' || response.data?.message) {
+      if (debugMode) {
+        console.warn('⚠️ SSE session creation failed:', response.data?.message || 'Unknown error');
+        console.warn('⚠️ Falling back to polling mode');
+      }
+      return null; // Signal to use polling instead
+    }
+
+    // Unknown response format
+    console.warn('Unexpected session response format:', response.data);
+    return null; // Fall back to polling for safety
   } catch (error) {
     // Check if endpoint doesn't exist (404) - fall back to polling
     if (error.response?.status === 404) {
@@ -131,8 +142,12 @@ const createSession = async (username, debugMode = false) => {
       return null; // Signal to use polling instead
     }
 
+    // Any other error - log and fall back to polling
     console.error('Failed to create session:', error);
-    throw error;
+    if (debugMode) {
+      console.warn('⚠️ Falling back to polling mode due to error');
+    }
+    return null; // Fall back to polling instead of throwing
   }
 };
 
@@ -654,40 +669,36 @@ export default function MapDashboard({ user, onLogout }) {
     }
 
     const setupSession = async () => {
-      try {
-        const username = users.find(u => u.id === selectedUser)?.name || selectedUser;
-        const session = await createSession(username, debugMode);
+      const username = users.find(u => u.id === selectedUser)?.name || selectedUser;
+      const session = await createSession(username, debugMode);
 
-        // Check if SSE is available
-        if (session === null) {
-          // SSE endpoints not available, fall back to polling
-          setSseAvailable(false);
-          if (debugMode) {
-            console.log('⚠️ SSE not available, using polling mode');
-          }
-          toast.info('Using polling mode (SSE not available)');
-          return;
-        }
-
-        setJwtToken(session.token);
-        setSessionId(session.sessionId);
-        setSessionExpiry(new Date(session.expiresAt).getTime());
-        setSseAvailable(true);
-
+      // Check if SSE is available
+      if (session === null) {
+        // SSE endpoints not available, fall back to polling
+        setSseAvailable(false);
+        setSseError(null); // Clear any previous errors
         if (debugMode) {
-          console.log('✅ JWT session created:', {
-            sessionId: session.sessionId,
-            expiresAt: session.expiresAt
-          });
+          console.log('⚠️ SSE not available, using polling mode');
         }
-
-        toast.success('Streaming session created');
-      } catch (error) {
-        console.error('Failed to create session:', error);
-        toast.error('Failed to create streaming session');
-        setSseError('Session creation failed');
-        setSseAvailable(false); // Fall back to polling on error
+        toast.info('Using polling mode', { autoClose: 2000 });
+        return;
       }
+
+      // SSE is available, set up session
+      setJwtToken(session.token);
+      setSessionId(session.sessionId);
+      setSessionExpiry(new Date(session.expiresAt).getTime());
+      setSseAvailable(true);
+      setSseError(null);
+
+      if (debugMode) {
+        console.log('✅ JWT session created:', {
+          sessionId: session.sessionId,
+          expiresAt: session.expiresAt
+        });
+      }
+
+      toast.success('Real-time streaming active', { autoClose: 2000 });
     };
 
     setupSession();
