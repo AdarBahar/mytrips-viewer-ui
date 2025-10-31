@@ -820,8 +820,10 @@ export default function MapDashboard({ user, onLogout }) {
       return;
     }
 
-    // API v2.1.0 only needs the token (user_id is in the JWT)
-    const sseUrl = `${LOC_API_BASEURL}/live/stream-sse.php?token=${jwtToken}`;
+    // API v2.1.0: SSE endpoint is at /location/stream-sse.php (not in /api subdirectory)
+    // Base URL: https://www.bahar.co.il/location/api -> https://www.bahar.co.il/location
+    const sseBaseUrl = LOC_API_BASEURL.replace('/api', '');
+    const sseUrl = `${sseBaseUrl}/stream-sse.php?token=${jwtToken}`;
 
     if (debugMode) {
       console.group('📡 SSE: Connecting to stream');
