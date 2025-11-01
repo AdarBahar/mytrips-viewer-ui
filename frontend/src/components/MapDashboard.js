@@ -163,13 +163,16 @@ const revokeSession = async (sessionId, debugMode = false) => {
 
     if (debugMode) {
       console.group('🔐 API Call: Revoke Session');
-      console.log('📤 DELETE', `${LOC_API_BASEURL}/live/session.php/${sessionId}`);
+      console.log('📤 DELETE', `${LOC_API_BASEURL}/live/session.php?session_id=${sessionId}`);
       console.groupEnd();
     }
 
     const response = await axios.delete(
-      `${LOC_API_BASEURL}/live/session.php/${sessionId}`,
+      `${LOC_API_BASEURL}/live/session.php`,
       {
+        params: {
+          session_id: sessionId
+        },
         headers: {
           'X-API-Token': LOC_API_TOKEN,
           'Accept': 'application/json'
