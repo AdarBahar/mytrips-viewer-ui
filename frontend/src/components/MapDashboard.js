@@ -812,11 +812,12 @@ export default function MapDashboard({ user, onLogout }) {
   }, [sessionExpiry, selectedUser, isLiveTracking, users, debugMode]);
 
   // SSE streaming for real-time location updates (only if SSE is available)
+  // Using fetch-based implementation to avoid HTTP/3 QUIC protocol errors
   useEffect(() => {
     if (!selectedUser || !isLiveTracking || !jwtToken || !sseAvailable) {
       // Close existing SSE connection
       if (eventSourceRef.current) {
-        eventSourceRef.current.close();
+        eventSourceRef.current.abort();
         eventSourceRef.current = null;
         setSseConnected(false);
       }
@@ -829,115 +830,154 @@ export default function MapDashboard({ user, onLogout }) {
     const sseUrl = `${sseBaseUrl}/stream-sse.php?token=${jwtToken}`;
 
     if (debugMode) {
-      console.group('📡 SSE: Connecting to stream');
+      console.group('📡 SSE: Connecting to stream (fetch-based, HTTP/1.1)');
       console.log('📤 URL:', sseUrl.replace(jwtToken, '[REDACTED]'));
       console.groupEnd();
     }
 
-    const eventSource = new EventSource(sseUrl);
-    eventSourceRef.current = eventSource;
+    // Create AbortController for connection management
+    const abortController = new AbortController();
+    eventSourceRef.current = abortController;
 
-    // Handle 'connected' event (API v2.1.0)
-    eventSource.addEventListener('connected', (event) => {
-      const data = JSON.parse(event.data);
-      setSseConnected(true);
-      setSseError(null);
-      if (debugMode) {
-        console.log('✅ SSE: Connected:', data);
-      }
-      toast.success('Real-time streaming connected');
-    });
-
-    // Handle 'loc' event (location update)
-    eventSource.addEventListener('loc', (event) => {
+    // Helper function to handle SSE events
+    const handleSSEEvent = (eventType, data) => {
       try {
-        const location = JSON.parse(event.data);
+        const parsed = JSON.parse(data);
 
-        if (debugMode) {
-          console.group('📡 SSE: Location update');
-          console.log('📥 Data:', location);
-          console.groupEnd();
+        switch (eventType) {
+          case 'connected':
+            setSseConnected(true);
+            setSseError(null);
+            if (debugMode) {
+              console.log('✅ SSE: Connected:', parsed);
+            }
+            toast.success('Real-time streaming connected');
+            break;
+
+          case 'loc':
+            if (debugMode) {
+              console.group('📡 SSE: Location update');
+              console.log('📥 Data:', parsed);
+              console.groupEnd();
+            }
+
+            const lat = parseFloat(parsed.latitude);
+            const lng = parseFloat(parsed.longitude);
+
+            // Validate coordinates
+            if (isNaN(lat) || isNaN(lng)) {
+              console.warn('Invalid coordinates in SSE location:', parsed);
+              return;
+            }
+
+            const locationData = {
+              lat,
+              lng,
+              speed: parsed.speed,
+              timestamp: parsed.server_time,
+              accuracy: parsed.accuracy,
+              battery: parsed.battery_level
+            };
+
+            if (debugMode) {
+              console.log('✅ SSE: Updating location:', locationData);
+            }
+
+            setCurrentLocation(locationData);
+            break;
+
+          case 'no_change':
+            if (debugMode) {
+              console.log('💓 SSE: Heartbeat:', parsed);
+            }
+            break;
+
+          case 'error':
+            console.error('❌ SSE: Error event:', parsed);
+            setSseError(parsed.message || 'Stream error');
+            break;
+
+          case 'bye':
+            console.log('👋 SSE: Connection closing:', parsed);
+            setSseConnected(false);
+            setSseError(parsed.message || 'Session ended');
+            break;
         }
-
-        const lat = parseFloat(location.latitude);
-        const lng = parseFloat(location.longitude);
-
-        // Validate coordinates
-        if (isNaN(lat) || isNaN(lng)) {
-          console.warn('Invalid coordinates in SSE location:', location);
-          return;
-        }
-
-        const locationData = {
-          lat,
-          lng,
-          speed: location.speed,
-          timestamp: location.server_time,
-          accuracy: location.accuracy,
-          battery: location.battery_level
-        };
-
-        if (debugMode) {
-          console.log('✅ SSE: Updating location:', locationData);
-        }
-
-        setCurrentLocation(locationData);
-      } catch (error) {
-        console.error('Failed to parse SSE location:', error);
-      }
-    });
-
-    // Handle 'no_change' event (heartbeat)
-    eventSource.addEventListener('no_change', (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (debugMode) {
-          console.log('💓 SSE: Heartbeat:', data);
-        }
-      } catch (error) {
-        console.error('Failed to parse SSE heartbeat:', error);
-      }
-    });
-
-    // Handle 'bye' event (connection closing)
-    eventSource.addEventListener('bye', (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        console.log('👋 SSE: Connection closing:', data);
-        setSseConnected(false);
-        setSseError(data.message || 'Session ended');
-      } catch (error) {
-        console.error('Failed to parse SSE bye:', error);
-      }
-    });
-
-    // Handle 'error' event
-    eventSource.addEventListener('error', (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        console.error('❌ SSE: Error event:', data);
-        setSseError(data.message || 'Stream error');
-      } catch (error) {
-        // Error event might not have data
-        console.error('SSE error event:', event);
-      }
-    });
-
-    eventSource.onerror = (error) => {
-      console.error('SSE connection error:', error);
-      setSseConnected(false);
-      setSseError('Connection lost');
-
-      // EventSource will automatically reconnect
-      if (debugMode) {
-        console.log('🔄 SSE: Reconnecting...');
+      } catch (e) {
+        console.error('Failed to parse SSE event:', e, data);
       }
     };
 
+    // Start fetch-based SSE connection
+    const connectSSE = async () => {
+      try {
+        const response = await fetch(sseUrl, {
+          signal: abortController.signal,
+          headers: {
+            'Accept': 'text/event-stream',
+            'Cache-Control': 'no-cache'
+          }
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        console.log('✅ SSE connection established');
+
+        // Read the stream
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const {done, value} = await reader.read();
+          if (done) {
+            console.log('🔌 SSE stream ended');
+            setSseConnected(false);
+            break;
+          }
+
+          buffer += decoder.decode(value, {stream: true});
+          const lines = buffer.split('\n');
+          buffer = lines.pop(); // Keep incomplete line in buffer
+
+          let currentEvent = null;
+          let currentData = '';
+
+          for (const line of lines) {
+            if (line.startsWith('event:')) {
+              currentEvent = line.substring(6).trim();
+            } else if (line.startsWith('data:')) {
+              currentData = line.substring(5).trim();
+            } else if (line === '' && currentEvent) {
+              // End of event - process it
+              handleSSEEvent(currentEvent, currentData);
+              currentEvent = null;
+              currentData = '';
+            }
+          }
+        }
+      } catch (error) {
+        if (error.name === 'AbortError') {
+          console.log('🔌 SSE connection closed by user');
+        } else {
+          console.error('❌ SSE error:', error);
+          setSseConnected(false);
+          setSseError('Connection lost');
+          if (debugMode) {
+            console.log('🔄 SSE: Connection failed');
+          }
+        }
+      }
+    };
+
+    connectSSE();
+
     // Cleanup on unmount
     return () => {
-      if (eventSource) {
-        eventSource.close();
+      if (abortController) {
+        abortController.abort();
         setSseConnected(false);
         if (debugMode) {
           console.log('🔌 SSE: Disconnected');
