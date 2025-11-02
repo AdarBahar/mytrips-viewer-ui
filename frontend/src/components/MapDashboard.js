@@ -416,13 +416,61 @@ export default function MapDashboard({ user, onLogout }) {
           setUsers([]);
         }
       } catch (error) {
-        console.error('Failed to load data:', error);
-        toast.error('Failed to load users data');
+        console.group('❌ API Error: Fetch Users Failed');
+        console.error('Error:', error.message);
+
+        if (error.response) {
+          // Server responded with error status
+          console.error('HTTP Status:', error.response.status);
+          console.error('Status Text:', error.response.statusText);
+          console.error('Response Data:', error.response.data);
+          console.error('Response Headers:', error.response.headers);
+
+          // Specific handling for common errors
+          if (error.response.status === 504) {
+            console.error('🔴 Gateway Timeout (504): The users.php endpoint is not responding');
+            console.error('This usually means the backend server is down or overloaded');
+            toast.error('Server timeout - users endpoint not responding');
+          } else if (error.response.status === 503) {
+            console.error('🔴 Service Unavailable (503): The server is temporarily unavailable');
+            toast.error('Service unavailable - please try again later');
+          } else if (error.response.status === 500) {
+            console.error('🔴 Internal Server Error (500): The server encountered an error');
+            toast.error('Server error - please contact support');
+          } else if (error.response.status === 401) {
+            console.error('🔴 Unauthorized (401): Invalid or expired token');
+            toast.error('Authentication failed - please login again');
+            onLogout();
+          } else if (error.response.status === 403) {
+            console.error('🔴 Forbidden (403): Access denied');
+            toast.error('Access denied');
+          } else if (error.response.status === 404) {
+            console.error('🔴 Not Found (404): Endpoint not found');
+            toast.error('API endpoint not found');
+          } else {
+            toast.error(`Failed to load users data (HTTP ${error.response.status})`);
+          }
+        } else if (error.request) {
+          // Request was made but no response received
+          console.error('No response received from server');
+          console.error('Request:', error.request);
+          console.error('🔴 Network Error: The server did not respond');
+          console.error('Possible causes:');
+          console.error('- Server is down');
+          console.error('- Network connectivity issues');
+          console.error('- CORS policy blocking the request');
+          console.error('- Firewall blocking the connection');
+          toast.error('Network error - cannot reach server');
+        } else {
+          // Something else happened
+          console.error('Request setup error:', error.message);
+          toast.error('Failed to load users data');
+        }
+
+        console.groupEnd();
+
         // Set empty arrays on error to prevent .map() errors
         setUsers([]);
-        if (error.response?.status === 401) {
-          onLogout();
-        }
       }
     };
 
