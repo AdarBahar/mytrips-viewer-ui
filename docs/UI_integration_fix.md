@@ -91,7 +91,7 @@ Create or update your API configuration file:
 // config/locationApi.js (or wherever you store config)
 
 const LOCATION_API_CONFIG = {
-  baseUrl: 'https://www.bahar.co.il/location/api',
+  baseUrl: 'https://mytrips-api.bahar.co.il/location/api',
   apiToken: '4Q9j0INedMHobgNdJx+PqcXesQjifyl9LCE+W2phLdI=',
   
   endpoints: {

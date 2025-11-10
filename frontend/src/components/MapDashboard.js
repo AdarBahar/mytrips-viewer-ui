@@ -5,6 +5,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Switch } from './ui/switch';
 import { toast } from 'sonner';
 import { LogOut, MapPin, Navigation, Clock, Gauge, Radio, Minimize2, Maximize2, X, Bug } from 'lucide-react';
+import { formatUTCToLocalTime } from '../utils/timestampUtils';
 
 // Environment variables - validate at module load
 const GOOGLE_MAPS_API_KEY = process.env.REACT_APP_GOOGLE_MAPS_API_KEY;
@@ -90,14 +91,14 @@ const createSession = async (userId, debugMode = false) => {
 
     if (debugMode) {
       console.group('🔐 API Call: Create JWT Session');
-      console.log('📤 POST', `${LOC_API_BASEURL}/live/session.php`);
+      console.log('📤 POST', `${LOC_API_BASEURL}/live/session`);
       console.log('📤 Body:', sessionData);
       console.log('📤 Headers: [REDACTED]');
       console.groupEnd();
     }
 
     const response = await axios.post(
-      `${LOC_API_BASEURL}/live/session.php`,
+      `${LOC_API_BASEURL}/live/session`,
       sessionData,
       {
         headers: {
@@ -163,12 +164,12 @@ const revokeSession = async (sessionId, debugMode = false) => {
 
     if (debugMode) {
       console.group('🔐 API Call: Revoke Session');
-      console.log('📤 DELETE', `${LOC_API_BASEURL}/live/session.php?session_id=${sessionId}`);
+      console.log('📤 DELETE', `${LOC_API_BASEURL}/live/session?session_id=${sessionId}`);
       console.groupEnd();
     }
 
     const response = await axios.delete(
-      `${LOC_API_BASEURL}/live/session.php`,
+      `${LOC_API_BASEURL}/live/session`,
       {
         params: {
           session_id: sessionId
@@ -278,7 +279,6 @@ export default function MapDashboard({ user, onLogout }) {
 
   // Location API headers (always use LOC_API_TOKEN for Location API calls)
   const locationApiHeaders = {
-    'Authorization': `Bearer ${LOC_API_TOKEN}`,
     'X-API-Token': LOC_API_TOKEN,
     'Accept': 'application/json'
   };
@@ -379,7 +379,6 @@ export default function MapDashboard({ user, onLogout }) {
           include_metadata: 'false'
         };
         const usersHeaders = {
-          'Authorization': `Bearer ${LOC_API_TOKEN}`,
           'X-API-Token': LOC_API_TOKEN,
           'Accept': 'application/json'
         };
@@ -387,11 +386,11 @@ export default function MapDashboard({ user, onLogout }) {
         if (debugMode) {
           console.group('🌐 API Call: Fetch Users');
           console.log('📤 CURL Command:');
-          console.log(generateCurlCommand('GET', `${LOC_API_BASEURL}/users.php`, usersHeaders, usersParams));
+          console.log(generateCurlCommand('GET', `${LOC_API_BASEURL}/users`, usersHeaders, usersParams));
           console.groupEnd();
         }
 
-        const usersRes = await axios.get(`${LOC_API_BASEURL}/users.php`, {
+        const usersRes = await axios.get(`${LOC_API_BASEURL}/users`, {
           params: usersParams,
           headers: usersHeaders
         });
@@ -403,9 +402,9 @@ export default function MapDashboard({ user, onLogout }) {
           console.groupEnd();
         }
 
-        // Parse Location API response format: {"status": "success", "data": {"users": [...]}}
-        if (usersRes.data?.status === 'success' && usersRes.data?.data?.users) {
-          const users = usersRes.data.data.users.map(user => ({
+        // Parse Location API response format: {"users": [...], "count": N, "source": "database"}
+        if (usersRes.data?.users && Array.isArray(usersRes.data.users)) {
+          const users = usersRes.data.users.map(user => ({
             id: String(user.id),
             name: user.display_name || user.username,
             status: 'active'
@@ -428,7 +427,7 @@ export default function MapDashboard({ user, onLogout }) {
 
           // Specific handling for common errors
           if (error.response.status === 504) {
-            console.error('🔴 Gateway Timeout (504): The users.php endpoint is not responding');
+            console.error('🔴 Gateway Timeout (504): The users endpoint is not responding');
             console.error('This usually means the backend server is down or overloaded');
             toast.error('Server timeout - users endpoint not responding');
           } else if (error.response.status === 503) {
@@ -534,7 +533,7 @@ export default function MapDashboard({ user, onLogout }) {
         let total;
 
         if (isRecentHistory) {
-          // Use /live/history.php for recent data (≤24 hours) with dwell/drive analytics
+          // Use /live/history for recent data (≤24 hours) with dwell/drive analytics
           const duration = timeRange === 'last_hour' ? 3600 : 86400;
           const historyParams = {
             user: username,
@@ -547,11 +546,11 @@ export default function MapDashboard({ user, onLogout }) {
           if (debugMode) {
             console.group('🌐 API Call: Fetch Route History (Cache + Analytics)');
             console.log('📤 CURL Command:');
-            console.log(generateCurlCommand('GET', `${LOC_API_BASEURL}/live/history.php`, locationApiHeaders, historyParams));
+            console.log(generateCurlCommand('GET', `${LOC_API_BASEURL}/live/history`, locationApiHeaders, historyParams));
             console.groupEnd();
           }
 
-          response = await axios.get(`${LOC_API_BASEURL}/live/history.php`, {
+          response = await axios.get(`${LOC_API_BASEURL}/live/history`, {
             params: historyParams,
             headers: locationApiHeaders
           });
@@ -584,7 +583,7 @@ export default function MapDashboard({ user, onLogout }) {
             }
           }
         } else {
-          // Use /locations.php for older data (>24 hours or all time)
+          // Use /locations for older data (>24 hours or all time)
           const params = {
             user: username,
             limit: 1000,
@@ -607,11 +606,11 @@ export default function MapDashboard({ user, onLogout }) {
           if (debugMode) {
             console.group('🌐 API Call: Fetch Route History (Database)');
             console.log('📤 CURL Command:');
-            console.log(generateCurlCommand('GET', `${LOC_API_BASEURL}/locations.php`, locationApiHeaders, params));
+            console.log(generateCurlCommand('GET', `${LOC_API_BASEURL}/locations`, locationApiHeaders, params));
             console.groupEnd();
           }
 
-          response = await axios.get(`${LOC_API_BASEURL}/locations.php`, {
+          response = await axios.get(`${LOC_API_BASEURL}/locations`, {
             params,
             headers: locationApiHeaders
           });
@@ -644,7 +643,7 @@ export default function MapDashboard({ user, onLogout }) {
             distance: calculateDistance(points),
             duration: isRecentHistory
               ? Math.round(response.data.data.duration / 60)
-              : null, // Duration not available from /locations.php
+              : null, // Duration not available from /locations
             source: isRecentHistory ? 'cache' : 'database'
           });
           setHistoryTotal(total);
@@ -710,12 +709,12 @@ export default function MapDashboard({ user, onLogout }) {
         if (debugMode) {
           console.group('🌐 API Call: Initialize Live Tracking');
           console.log('📤 CURL Command:');
-          console.log(generateCurlCommand('GET', `${LOC_API_BASEURL}/live/latest.php`, locationApiHeaders, latestParams));
+          console.log(generateCurlCommand('GET', `${LOC_API_BASEURL}/live/latest`, locationApiHeaders, latestParams));
           console.groupEnd();
         }
 
-        // Use Location API /live/latest.php to get initial position
-        const response = await axios.get(`${LOC_API_BASEURL}/live/latest.php`, {
+        // Use Location API /live/latest to get initial position
+        const response = await axios.get(`${LOC_API_BASEURL}/live/latest`, {
           params: latestParams,
           headers: locationApiHeaders
         });
@@ -872,10 +871,10 @@ export default function MapDashboard({ user, onLogout }) {
       return;
     }
 
-    // API v2.1.0: SSE endpoint is at /location/stream-sse.php (not in /api subdirectory)
-    // Base URL: https://www.bahar.co.il/location/api -> https://www.bahar.co.il/location
+    // API v2.1.0: SSE endpoint is at /location/stream-sse (not in /api subdirectory)
+    // Base URL: https://mytrips-api.bahar.co.il/location/api -> https://mytrips-api.bahar.co.il/location
     const sseBaseUrl = LOC_API_BASEURL.replace('/api', '');
-    const sseUrl = `${sseBaseUrl}/stream-sse.php?token=${jwtToken}`;
+    const sseUrl = `${sseBaseUrl}/stream-sse?token=${jwtToken}`;
 
     if (debugMode) {
       console.group('📡 SSE: Connecting to stream (fetch-based, HTTP/1.1)');
@@ -1049,7 +1048,7 @@ export default function MapDashboard({ user, onLogout }) {
 
     const pollLocation = async () => {
       try {
-        const response = await axios.get(`${LOC_API_BASEURL}/live/latest.php`, {
+        const response = await axios.get(`${LOC_API_BASEURL}/live/latest`, {
           params: {
             user: username
           },
@@ -1214,7 +1213,7 @@ export default function MapDashboard({ user, onLogout }) {
                   <div className="flex items-center gap-1.5 text-slate-600">
                     <Clock className="h-3 w-3" />
                     <span>
-                      {new Date(currentLocation.timestamp).toLocaleTimeString()}
+                      {formatUTCToLocalTime(currentLocation.timestamp)}
                       <span className="text-slate-500 ml-1">
                         ({formatTimeAgo(currentLocation.timestamp)})
                       </span>
@@ -1319,7 +1318,7 @@ export default function MapDashboard({ user, onLogout }) {
                     <div className="flex items-start gap-2 text-slate-700">
                       <Clock className="h-3 w-3 mt-0.5" />
                       <div className="flex flex-col">
-                        <span>{new Date(currentLocation.timestamp).toLocaleTimeString()}</span>
+                        <span>{formatUTCToLocalTime(currentLocation.timestamp)}</span>
                         <span className="text-slate-500">
                           {formatTimeAgo(currentLocation.timestamp)}
                         </span>
@@ -1339,7 +1338,7 @@ export default function MapDashboard({ user, onLogout }) {
       )}
 
       {/* Control Panel */}
-      <div className="absolute top-6 left-6 bg-white/95 backdrop-blur-md rounded-2xl shadow-2xl border border-slate-200 z-10 transition-all duration-300">
+      <div className="absolute top-24 left-6 bg-white/95 backdrop-blur-md rounded-2xl shadow-2xl border border-slate-200 z-10 transition-all duration-300">
         <div className={`${isMinimized ? 'p-4' : 'p-6'} ${isMinimized ? 'w-auto' : 'w-80'}`}>
           <div className="flex items-center justify-between gap-3">
             <h2 className={`font-bold text-slate-800 ${isMinimized ? 'text-lg' : 'text-2xl'}`} style={{ fontFamily: 'Space Grotesk, sans-serif' }}>
