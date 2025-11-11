@@ -92,7 +92,12 @@ case $choice in
         echo ""
         echo -e "${YELLOW}Creating deployment package...${NC}"
         PACKAGE_NAME="mytrips-viewer-$(date +%Y%m%d-%H%M%S).tar.gz"
-        tar -czf "$PACKAGE_NAME" -C "$BUILD_DIR" .
+        # Exclude macOS metadata files and source maps for cleaner deployment
+        tar -czf "$PACKAGE_NAME" \
+            --exclude='._*' \
+            --exclude='.DS_Store' \
+            --exclude='*.map' \
+            -C "$BUILD_DIR" .
         echo -e "${GREEN}✓ Package created: $PACKAGE_NAME${NC}"
         echo ""
         echo "Upload this package to your server and extract it:"
