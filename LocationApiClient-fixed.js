@@ -1,62 +1,91 @@
 /**
- * Location API Client - SSE Integration with New Endpoint
+ * Location API Client - Fixed for HTTP/3 (QUIC) Compatibility
  *
- * This version uses the new `/location/live/sse` endpoint with EventSource
- * and a same-origin proxy route for token injection.
+ * This version uses fetch-based SSE instead of native EventSource
+ * to avoid net::ERR_QUIC_PROTOCOL_ERROR when using Cloudflare with HTTP/3
  *
- * @version 3.0.0-sse-endpoint
- * @date 2025-11-11
- *
- * ============================================================================
- * NEW SSE ENDPOINT INTEGRATION
- * ============================================================================
- *
- * Backend SSE endpoint: `/location/live/sse`
- * Frontend proxy route: `/api/location/live/sse` (recommended for browsers)
- * Protocol: text/event-stream (SSE)
- * Event type: `point` with JSON payload per location record
- *
- * Why a proxy route?
- * - Browsers' EventSource cannot set custom headers (like X-API-Token)
- * - The proxy route forwards the stream to the backend and attaches the token
- * - Use the proxy route from UI code
+ * @version 2.1.2-http1-fix
+ * @date 2025-11-02
  *
  * ============================================================================
- * EVENT SCHEMA
+ * DWELL BEHAVIOR & LOCATION UPDATES
  * ============================================================================
  *
- * Each `point` event carries JSON data:
+ * The SSE stream sends different events based on location changes:
  *
- * {
- *   "device_id": "dev-123",
- *   "user_id": 42,
- *   "username": "adar",
- *   "display_name": "Adar Bahar",
- *   "latitude": 32.0777,
- *   "longitude": 34.7733,
- *   "accuracy": 6.0,
- *   "altitude": 20.5,
- *   "speed": 1.2,
- *   "bearing": 270,
- *   "battery_level": 0.78,
- *   "recorded_at": "2024-10-01T12:34:56Z",
- *   "server_time": "2024-10-01T12:34:57.001Z",
- *   "server_timestamp": 1727786097001
- * }
+ * 1. LOCATION CHANGED (loc event):
+ *    - Sent when significant change detected:
+ *      • Distance: > 20 meters
+ *      • Time: > 5 minutes (even if same location)
+ *      • Speed: > 5 km/h change
+ *      • Bearing: > 15° change
+ *    - Contains full location data (lat, lng, speed, etc.)
+ *    - Includes change_reason: "distance", "time", "speed", "bearing", or "first"
  *
- * Notes:
- * - Each event has an SSE `id` equal to `server_timestamp` for resume
- * - Keep-alive comments look like `: keep-alive <ms>`
- * - Keep-alives are not delivered to onmessage and do not have data
+ * 2. NO CHANGE (no_change event):
+ *    - Sent every 30 seconds when no significant changes
+ *    - Just a heartbeat to keep connection alive
+ *    - Does NOT include location coordinates
+ *    - Contains: {active_devices: N, timestamp: "..."}
+ *
+ * 3. DWELL BEHAVIOR (User Stationary):
+ *    When user stays at same location:
+ *    - First location sent immediately (reason: "first")
+ *    - After 5 minutes, SAME location re-sent (reason: "time")
+ *    - Every 5 minutes thereafter, location re-sent
+ *    - Between updates, heartbeat events sent every 30 seconds
+ *
+ * EXAMPLE TIMELINE (User dwelling at same spot):
+ *
+ *   10:00:00 - loc event (reason: "first", lat: 32.0853, lng: 34.7818)
+ *   10:00:30 - no_change event (heartbeat)
+ *   10:01:00 - no_change event (heartbeat)
+ *   10:01:30 - no_change event (heartbeat)
+ *   ...
+ *   10:05:00 - loc event (reason: "time", lat: 32.0853, lng: 34.7818) <- SAME coords
+ *   10:05:30 - no_change event (heartbeat)
+ *   ...
+ *   10:10:00 - loc event (reason: "time", lat: 32.0853, lng: 34.7818) <- SAME coords
+ *
+ * TO DISPLAY "DWELLING FOR X TIME" IN UI:
+ *
+ *   You need to track this in your UI code:
+ *
+ *   let lastLocation = null;
+ *   let dwellStart = null;
+ *
+ *   onLocation: (location) => {
+ *     // Check if coordinates actually changed
+ *     const coordsChanged = !lastLocation ||
+ *       lastLocation.latitude !== location.latitude ||
+ *       lastLocation.longitude !== location.longitude;
+ *
+ *     if (coordsChanged) {
+ *       // Location changed - reset dwell tracking
+ *       dwellStart = null;
+ *       showStatus('Moving');
+ *     } else {
+ *       // Same location - track dwell duration
+ *       if (!dwellStart) {
+ *         dwellStart = new Date(location.recorded_at);
+ *       }
+ *       const duration = calculateDuration(dwellStart, new Date());
+ *       showStatus(`Dwelling for ${duration}`);
+ *     }
+ *
+ *     lastLocation = location;
+ *     updateMap(location);
+ *   }
  *
  * ============================================================================
  */
 
 class LocationApiClient {
-  constructor(proxyBaseUrl = '/api/location/live/sse') {
-    this.proxyBaseUrl = proxyBaseUrl;
-    this.eventSource = null;
-    this.lastEventId = null;
+  constructor(baseUrl = 'https://www.bahar.co.il/location/api', apiToken = '4Q9j0INedMHobgNdJx+PqcXesQjifyl9LCE+W2phLdI=') {
+    this.baseUrl = baseUrl;
+    this.apiToken = apiToken;
+    this.sessionToken = null;
+    this.abortController = null;
   }
 
   /**
@@ -73,10 +102,10 @@ class LocationApiClient {
         user_id: userId,
         device_ids: deviceIds,
         duration: duration,
-        endpoint: `${this.baseUrl}/live/session`
+        endpoint: `${this.baseUrl}/live/session.php`
       });
 
-      const response = await fetch(`${this.baseUrl}/live/session`, {
+      const response = await fetch(`${this.baseUrl}/live/session.php`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -143,7 +172,7 @@ class LocationApiClient {
       throw new Error('No session token. Call createSession() first.');
     }
 
-    const streamUrl = `${this.baseUrl}/stream-sse?token=${this.sessionToken}`;
+    const streamUrl = `${this.baseUrl}/stream-sse.php?token=${this.sessionToken}`;
 
     // Create AbortController for connection management
     this.abortController = new AbortController();
@@ -168,8 +197,7 @@ class LocationApiClient {
         signal: this.abortController.signal,
         headers: {
           'Accept': 'text/event-stream',
-          'Cache-Control': 'no-cache',
-          'X-API-Token': this.apiToken
+          'Cache-Control': 'no-cache'
         }
       });
 
@@ -394,9 +422,10 @@ class LocationApiClient {
       console.log('🔑 [SESSION] Revoking session...');
       console.log('🔑 [SESSION] Session token:', this.sessionToken.substring(0, 20) + '...');
 
-      const response = await fetch(`${this.baseUrl}/live/session`, {
+      const response = await fetch(`${this.baseUrl}/live/session.php`, {
         method: 'DELETE',
         headers: {
+          'Authorization': `Bearer ${this.sessionToken}`,
           'X-API-Token': this.apiToken
         }
       });
@@ -436,7 +465,7 @@ class LocationApiClient {
     const params = new URLSearchParams({ user_id: userId });
     if (deviceId) params.append('device_id', deviceId);
 
-    const response = await fetch(`${this.baseUrl}/live/latest?${params}`, {
+    const response = await fetch(`${this.baseUrl}/live/latest.php?${params}`, {
       method: 'GET',
       headers: {
         'X-API-Token': this.apiToken

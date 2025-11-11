@@ -6,6 +6,7 @@ import { Switch } from './ui/switch';
 import { toast } from 'sonner';
 import { LogOut, MapPin, Navigation, Clock, Gauge, Radio, Minimize2, Maximize2, X, Bug } from 'lucide-react';
 import { formatUTCToLocalTime } from '../utils/timestampUtils';
+import { useLiveLocations } from '../hooks/useLiveLocations';
 
 // Environment variables - validate at module load
 const GOOGLE_MAPS_API_KEY = process.env.REACT_APP_GOOGLE_MAPS_API_KEY;
@@ -77,120 +78,7 @@ const generateCurlCommand = (method, url, headers, params = null, data = null) =
   return curl;
 };
 
-// Session management functions
-const createSession = async (userId, debugMode = false) => {
-  try {
-    // Convert userId to number (API expects numeric user_id)
-    const numericUserId = parseInt(userId, 10);
-
-    const sessionData = {
-      user_id: numericUserId,
-      device_ids: [], // Empty array = all devices
-      duration: 3600 // 1 hour session
-    };
-
-    if (debugMode) {
-      console.group('🔐 API Call: Create JWT Session');
-      console.log('📤 POST', `${LOC_API_BASEURL}/live/session`);
-      console.log('📤 Body:', sessionData);
-      console.log('📤 Headers: [REDACTED]');
-      console.groupEnd();
-    }
-
-    const response = await axios.post(
-      `${LOC_API_BASEURL}/live/session`,
-      sessionData,
-      {
-        headers: {
-          'X-API-Token': LOC_API_TOKEN,
-          'Accept': 'application/json',
-          'Content-Type': 'application/json'
-        }
-      }
-    );
-
-    if (debugMode) {
-      console.group('🔐 API Response: Create JWT Session');
-      console.log('📥 Status:', response.status);
-      console.log('📥 Full Response:', response.data);
-      console.groupEnd();
-    }
-
-    // Check if response indicates success (v2.1.0 format)
-    if (response.data?.status === 'success' && response.data?.data?.session_token) {
-      return {
-        token: response.data.data.session_token,
-        sessionId: response.data.data.session_id,
-        expiresAt: response.data.data.expires_at
-      };
-    }
-
-    // If response indicates error or feature not available, fall back to polling
-    if (response.data?.status === 'error' || response.data?.message) {
-      if (debugMode) {
-        console.warn('⚠️ SSE session creation failed:', response.data?.message || 'Unknown error');
-        console.warn('⚠️ Falling back to polling mode');
-      }
-      return null; // Signal to use polling instead
-    }
-
-    // Unknown response format
-    console.warn('Unexpected session response format:', response.data);
-    return null; // Fall back to polling for safety
-  } catch (error) {
-    // Check if endpoint doesn't exist (404) - fall back to polling
-    if (error.response?.status === 404) {
-      if (debugMode) {
-        console.warn('⚠️ SSE endpoints not available (404), will fall back to polling');
-      }
-      return null; // Signal to use polling instead
-    }
-
-    // Any other error - log and fall back to polling
-    console.error('Failed to create session:', error);
-    if (debugMode) {
-      console.warn('⚠️ Falling back to polling mode due to error');
-      if (error.response?.data) {
-        console.warn('⚠️ Error response:', error.response.data);
-      }
-    }
-    return null; // Fall back to polling instead of throwing
-  }
-};
-
-const revokeSession = async (sessionId, debugMode = false) => {
-  try {
-    if (!sessionId) return;
-
-    if (debugMode) {
-      console.group('🔐 API Call: Revoke Session');
-      console.log('📤 DELETE', `${LOC_API_BASEURL}/live/session?session_id=${sessionId}`);
-      console.groupEnd();
-    }
-
-    const response = await axios.delete(
-      `${LOC_API_BASEURL}/live/session`,
-      {
-        params: {
-          session_id: sessionId
-        },
-        headers: {
-          'X-API-Token': LOC_API_TOKEN,
-          'Accept': 'application/json'
-        }
-      }
-    );
-
-    if (debugMode) {
-      console.log('✅ Session revoked successfully:', response.data);
-    }
-  } catch (error) {
-    console.error('Failed to revoke session:', error);
-    if (debugMode && error.response?.data) {
-      console.error('Error response:', error.response.data);
-    }
-  }
-};
+// Session management functions removed - using new SSE endpoint with query parameters instead
 
 // Reverse geocoding function to get address from coordinates
 const reverseGeocode = async (lat, lng) => {
@@ -258,22 +146,22 @@ export default function MapDashboard({ user, onLogout }) {
   const [historyTotal, setHistoryTotal] = useState(0); // Total history records
   const [debugMode, setDebugMode] = useState(false); // Debug mode toggle
 
-  // Enhanced streaming state
-  const [jwtToken, setJwtToken] = useState(null); // JWT session token
-  const [sessionId, setSessionId] = useState(null); // Session ID for revocation
-  const [sessionExpiry, setSessionExpiry] = useState(null); // Session expiry timestamp
-  const [sseConnected, setSseConnected] = useState(false); // SSE connection status
-  const [sseError, setSseError] = useState(null); // SSE error message
-  const [dwellDriveSegments, setDwellDriveSegments] = useState(null); // Dwell/drive analytics
-  const [sseAvailable, setSseAvailable] = useState(true); // SSE endpoints available (fallback to polling if false)
+  // Dwell/drive analytics
+  const [dwellDriveSegments, setDwellDriveSegments] = useState(null);
+
+  // Live location streaming using new SSE endpoint
+  const { connected: sseConnected, points, error: sseError } = useLiveLocations({
+    users: selectedUser ? [users.find(u => u.id === selectedUser)?.name || selectedUser] : [],
+    heartbeat: 10,
+    limit: 100,
+    enabled: isLiveTracking && selectedUser
+  });
 
   const mapRef = useRef(null);
   const googleMapRef = useRef(null);
   const plannedPolylineRef = useRef(null);
   const actualPolylineRef = useRef(null);
   const markerRef = useRef(null);
-  const eventSourceRef = useRef(null); // SSE EventSource reference
-  const sessionRefreshTimerRef = useRef(null); // Session refresh timer
 
   const token = localStorage.getItem('token');
 
@@ -763,352 +651,54 @@ export default function MapDashboard({ user, onLogout }) {
     initializeLiveTracking();
   }, [selectedUser, isLiveTracking, users, debugMode]); // Include all dependencies
 
-  // Create/refresh JWT session when user is selected for live tracking
+  // Handle incoming SSE points - update map with new location
   useEffect(() => {
-    if (!selectedUser || !isLiveTracking) {
-      // Clean up session when switching away from live tracking
-      if (sessionId) {
-        revokeSession(sessionId, debugMode);
-        setSessionId(null);
-        setJwtToken(null);
-        setSessionExpiry(null);
-      }
-      return;
-    }
-
-    const setupSession = async () => {
-      // Pass user ID (numeric) to createSession, not username
-      const session = await createSession(selectedUser, debugMode);
-
-      // Check if SSE is available
-      if (session === null) {
-        // SSE endpoints not available, fall back to polling
-        setSseAvailable(false);
-        setSseError(null); // Clear any previous errors
-        if (debugMode) {
-          console.log('⚠️ SSE not available, using polling mode');
-        }
-        toast.info('Using polling mode', { autoClose: 2000 });
-        return;
-      }
-
-      // SSE is available, set up session
-      setJwtToken(session.token);
-      setSessionId(session.sessionId);
-      setSessionExpiry(new Date(session.expiresAt).getTime());
-      setSseAvailable(true);
-      setSseError(null);
+    if (points.length > 0) {
+      const latestPoint = points[points.length - 1];
 
       if (debugMode) {
-        console.log('✅ JWT session created:', {
-          sessionId: session.sessionId,
-          expiresAt: session.expiresAt
+        console.group('📍 SSE: Point received');
+        console.log('Username:', latestPoint.username);
+        console.log('Location:', latestPoint.latitude, latestPoint.longitude);
+        console.log('Speed:', latestPoint.speed, 'km/h');
+        console.log('Battery:', latestPoint.battery_level);
+        console.log('Timestamp:', latestPoint.server_timestamp);
+        console.groupEnd();
+      }
+
+      // Update current location
+      const locationData = {
+        lat: latestPoint.latitude,
+        lng: latestPoint.longitude,
+        speed: latestPoint.speed,
+        timestamp: latestPoint.server_time,
+        accuracy: latestPoint.accuracy,
+        battery: latestPoint.battery_level
+      };
+
+      setCurrentLocation(locationData);
+
+      // Update polyline with new point
+      if (actualPolylineRef.current && googleMapRef.current) {
+        const newPath = actualPolylineRef.current.getPath();
+        newPath.push(new window.google.maps.LatLng(
+          latestPoint.latitude,
+          latestPoint.longitude
+        ));
+      }
+
+      // Update marker position
+      if (markerRef.current && googleMapRef.current) {
+        markerRef.current.setPosition({
+          lat: latestPoint.latitude,
+          lng: latestPoint.longitude
         });
       }
-
-      toast.success('Real-time streaming active', { autoClose: 2000 });
-    };
-
-    setupSession();
-
-    // Cleanup on unmount or user change
-    return () => {
-      if (sessionRefreshTimerRef.current) {
-        clearTimeout(sessionRefreshTimerRef.current);
-      }
-    };
-  }, [selectedUser, isLiveTracking, users, debugMode]);
-
-  // Auto-refresh session before expiry
-  useEffect(() => {
-    if (!sessionExpiry || !selectedUser || !isLiveTracking) {
-      return;
     }
+  }, [points, debugMode]);
 
-    const now = Date.now();
-    const timeUntilExpiry = sessionExpiry - now;
-    const refreshTime = timeUntilExpiry - (5 * 60 * 1000); // Refresh 5 minutes before expiry
-
-    if (refreshTime > 0) {
-      sessionRefreshTimerRef.current = setTimeout(async () => {
-        try {
-          const username = users.find(u => u.id === selectedUser)?.name || selectedUser;
-          const session = await createSession(username, debugMode);
-
-          setJwtToken(session.token);
-          setSessionId(session.sessionId);
-          setSessionExpiry(new Date(session.expiresAt).getTime());
-
-          if (debugMode) {
-            console.log('✅ JWT session refreshed');
-          }
-
-          toast.success('Session refreshed');
-        } catch (error) {
-          console.error('Failed to refresh session:', error);
-          toast.error('Session refresh failed');
-        }
-      }, refreshTime);
-    }
-
-    return () => {
-      if (sessionRefreshTimerRef.current) {
-        clearTimeout(sessionRefreshTimerRef.current);
-      }
-    };
-  }, [sessionExpiry, selectedUser, isLiveTracking, users, debugMode]);
-
-  // SSE streaming for real-time location updates (only if SSE is available)
-  // Using fetch-based implementation to avoid HTTP/3 QUIC protocol errors
-  useEffect(() => {
-    if (!selectedUser || !isLiveTracking || !jwtToken || !sseAvailable) {
-      // Close existing SSE connection
-      if (eventSourceRef.current) {
-        eventSourceRef.current.abort();
-        eventSourceRef.current = null;
-        setSseConnected(false);
-      }
-      return;
-    }
-
-    // API v2.1.0: SSE endpoint is at /location/stream-sse (not in /api subdirectory)
-    // Base URL: https://mytrips-api.bahar.co.il/location/api -> https://mytrips-api.bahar.co.il/location
-    const sseBaseUrl = LOC_API_BASEURL.replace('/api', '');
-    const sseUrl = `${sseBaseUrl}/stream-sse?token=${jwtToken}`;
-
-    if (debugMode) {
-      console.group('📡 SSE: Connecting to stream (fetch-based, HTTP/1.1)');
-      console.log('📤 URL:', sseUrl.replace(jwtToken, '[REDACTED]'));
-      console.groupEnd();
-    }
-
-    // Create AbortController for connection management
-    const abortController = new AbortController();
-    eventSourceRef.current = abortController;
-
-    // Helper function to handle SSE events
-    const handleSSEEvent = (eventType, data) => {
-      try {
-        const parsed = JSON.parse(data);
-
-        switch (eventType) {
-          case 'connected':
-            setSseConnected(true);
-            setSseError(null);
-            if (debugMode) {
-              console.log('✅ SSE: Connected:', parsed);
-            }
-            toast.success('Real-time streaming connected');
-            break;
-
-          case 'loc':
-            if (debugMode) {
-              console.group('📡 SSE: Location update');
-              console.log('📥 Data:', parsed);
-              console.groupEnd();
-            }
-
-            const lat = parseFloat(parsed.latitude);
-            const lng = parseFloat(parsed.longitude);
-
-            // Validate coordinates
-            if (isNaN(lat) || isNaN(lng)) {
-              console.warn('Invalid coordinates in SSE location:', parsed);
-              return;
-            }
-
-            const locationData = {
-              lat,
-              lng,
-              speed: parsed.speed,
-              timestamp: parsed.server_time,
-              accuracy: parsed.accuracy,
-              battery: parsed.battery_level
-            };
-
-            if (debugMode) {
-              console.log('✅ SSE: Updating location:', locationData);
-            }
-
-            setCurrentLocation(locationData);
-            break;
-
-          case 'no_change':
-            if (debugMode) {
-              console.log('💓 SSE: Heartbeat:', parsed);
-            }
-            break;
-
-          case 'error':
-            console.error('❌ SSE: Error event:', parsed);
-            setSseError(parsed.message || 'Stream error');
-            break;
-
-          case 'bye':
-            console.log('👋 SSE: Connection closing:', parsed);
-            setSseConnected(false);
-            setSseError(parsed.message || 'Session ended');
-            break;
-        }
-      } catch (e) {
-        console.error('Failed to parse SSE event:', e, data);
-      }
-    };
-
-    // Start fetch-based SSE connection
-    const connectSSE = async () => {
-      try {
-        const response = await fetch(sseUrl, {
-          signal: abortController.signal,
-          headers: {
-            'Accept': 'text/event-stream',
-            'Cache-Control': 'no-cache'
-          }
-        });
-
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-
-        console.log('✅ SSE connection established');
-
-        // Read the stream
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-
-        while (true) {
-          const {done, value} = await reader.read();
-          if (done) {
-            console.log('🔌 SSE stream ended');
-            setSseConnected(false);
-            break;
-          }
-
-          buffer += decoder.decode(value, {stream: true});
-          const lines = buffer.split('\n');
-          buffer = lines.pop(); // Keep incomplete line in buffer
-
-          let currentEvent = null;
-          let currentData = '';
-
-          for (const line of lines) {
-            if (line.startsWith('event:')) {
-              currentEvent = line.substring(6).trim();
-            } else if (line.startsWith('data:')) {
-              currentData = line.substring(5).trim();
-            } else if (line === '' && currentEvent) {
-              // End of event - process it
-              handleSSEEvent(currentEvent, currentData);
-              currentEvent = null;
-              currentData = '';
-            }
-          }
-        }
-      } catch (error) {
-        if (error.name === 'AbortError') {
-          console.log('🔌 SSE connection closed by user');
-        } else {
-          console.error('❌ SSE error:', error);
-          setSseConnected(false);
-          setSseError('Connection lost');
-          if (debugMode) {
-            console.log('🔄 SSE: Connection failed');
-          }
-        }
-      }
-    };
-
-    connectSSE();
-
-    // Cleanup on unmount
-    return () => {
-      if (abortController) {
-        abortController.abort();
-        setSseConnected(false);
-        if (debugMode) {
-          console.log('🔌 SSE: Disconnected');
-        }
-      }
-    };
-  }, [selectedUser, isLiveTracking, jwtToken, users, debugMode, sseAvailable]);
-
-  // Polling fallback when SSE is not available
-  useEffect(() => {
-    if (!selectedUser || !isLiveTracking || sseAvailable) {
-      // Don't poll if SSE is available or not in live tracking mode
-      return;
-    }
-
-    if (debugMode) {
-      console.log('🔄 Starting polling mode (SSE not available)');
-    }
-
-    const username = users.find(u => u.id === selectedUser)?.name || selectedUser;
-
-    const pollLocation = async () => {
-      try {
-        const response = await axios.get(`${LOC_API_BASEURL}/live/latest`, {
-          params: {
-            user: username
-          },
-          headers: locationApiHeaders
-        });
-
-        if (debugMode) {
-          console.log('📍 Polling response:', response.data);
-        }
-
-        // Handle response structure: { locations: [...], count: 1, ... }
-        if (response.data?.locations && Array.isArray(response.data.locations) && response.data.locations.length > 0) {
-          const location = response.data.locations[0]; // Get first (latest) location
-          const lat = parseFloat(location.latitude);
-          const lng = parseFloat(location.longitude);
-
-          // Validate coordinates before setting
-          if (isNaN(lat) || isNaN(lng)) {
-            console.warn('Invalid coordinates in polling response:', location);
-            return;
-          }
-
-          const locationData = {
-            lat,
-            lng,
-            speed: location.speed,
-            timestamp: location.server_time,
-            accuracy: location.accuracy,
-            battery: location.battery_level
-          };
-
-          setCurrentLocation(locationData);
-
-          if (debugMode) {
-            console.log('📍 Polling: Location updated:', locationData);
-          }
-        } else if (debugMode) {
-          console.warn('Polling: No location data in response');
-        }
-      } catch (error) {
-        console.error('Polling error:', error);
-        if (debugMode) {
-          console.error('Polling error details:', error.response?.data);
-        }
-      }
-    };
-
-    // Initial poll
-    pollLocation();
-
-    // Poll every 3 seconds
-    const pollInterval = setInterval(pollLocation, 3000);
-
-    return () => {
-      clearInterval(pollInterval);
-      if (debugMode) {
-        console.log('🔄 Polling stopped');
-      }
-    };
-  }, [selectedUser, isLiveTracking, sseAvailable, users, debugMode, LOC_API_BASEURL, locationApiHeaders]);
+  // SSE connection is now managed by the useLiveLocations hook
+  // No need for manual connection management or polling fallback
 
   // Update marker for current location
   useEffect(() => {
@@ -1266,32 +856,11 @@ export default function MapDashboard({ user, onLogout }) {
               {isLiveTracking && (
                 <div className="mt-3 pt-3 border-t border-slate-200">
                   <div className="flex items-center gap-2">
-                    {sseAvailable ? (
-                      <>
-                        <div className={`h-2 w-2 rounded-full ${sseConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
-                        <span className="text-xs text-slate-600">
-                          {sseConnected ? 'Real-time streaming active' : sseError || 'Connecting...'}
-                        </span>
-                      </>
-                    ) : (
-                      <>
-                        <div className="h-2 w-2 rounded-full bg-yellow-500 animate-pulse" />
-                        <span className="text-xs text-slate-600">
-                          Polling mode (3s interval)
-                        </span>
-                      </>
-                    )}
+                    <div className={`h-2 w-2 rounded-full ${sseConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
+                    <span className="text-xs text-slate-600">
+                      {sseConnected ? 'Real-time streaming active' : sseError || 'Connecting...'}
+                    </span>
                   </div>
-                  {jwtToken && sseAvailable && (
-                    <div className="text-xs text-slate-500 mt-1">
-                      Session expires: {sessionExpiry ? new Date(sessionExpiry).toLocaleTimeString() : 'N/A'}
-                    </div>
-                  )}
-                  {!sseAvailable && (
-                    <div className="text-xs text-slate-400 mt-1">
-                      SSE not available on server
-                    </div>
-                  )}
                 </div>
               )}
 
