@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import LocationApiClient from '../services/LocationApiClientNew';
 
-// Get backend URL from environment
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '/mytrips-viewer-api';
-const SSE_PROXY_URL = `${BACKEND_URL}/location/live/sse`;
+// Get MyTrips API URL from environment for SSE endpoint
+const MYTRIPS_API_URL = process.env.REACT_APP_MYTRIPS_API_BASEURL || 'https://mytrips-api.bahar.co.il';
+const SSE_ENDPOINT_URL = `${MYTRIPS_API_URL}/location/live/sse`;
 
 /**
  * Live location point data structure
@@ -87,7 +87,7 @@ export function useLiveLocations(params = {}) {
 
     // Create client if not exists
     if (!clientRef.current) {
-      clientRef.current = new LocationApiClient(SSE_PROXY_URL);
+      clientRef.current = new LocationApiClient(SSE_ENDPOINT_URL);
     }
 
     const client = clientRef.current;
