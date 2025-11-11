@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import LocationApiClient from '../services/LocationApiClientNew';
 
+// Get backend URL from environment
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '/mytrips-viewer-api';
+const SSE_PROXY_URL = `${BACKEND_URL}/location/live/sse`;
+
 /**
  * Live location point data structure
  * @typedef {Object} LivePoint
@@ -83,7 +87,7 @@ export function useLiveLocations(params = {}) {
 
     // Create client if not exists
     if (!clientRef.current) {
-      clientRef.current = new LocationApiClient();
+      clientRef.current = new LocationApiClient(SSE_PROXY_URL);
     }
 
     const client = clientRef.current;
