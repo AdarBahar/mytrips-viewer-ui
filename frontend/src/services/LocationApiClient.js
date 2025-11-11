@@ -1,91 +1,62 @@
 /**
- * Location API Client - Fixed for HTTP/3 (QUIC) Compatibility
+ * Location API Client - SSE Integration with New Endpoint
  *
- * This version uses fetch-based SSE instead of native EventSource
- * to avoid net::ERR_QUIC_PROTOCOL_ERROR when using Cloudflare with HTTP/3
+ * This version uses the new `/location/live/sse` endpoint with EventSource
+ * and a same-origin proxy route for token injection.
  *
- * @version 2.1.2-http1-fix
- * @date 2025-11-02
+ * @version 3.0.0-sse-endpoint
+ * @date 2025-11-11
  *
  * ============================================================================
- * DWELL BEHAVIOR & LOCATION UPDATES
+ * NEW SSE ENDPOINT INTEGRATION
  * ============================================================================
  *
- * The SSE stream sends different events based on location changes:
+ * Backend SSE endpoint: `/location/live/sse`
+ * Frontend proxy route: `/api/location/live/sse` (recommended for browsers)
+ * Protocol: text/event-stream (SSE)
+ * Event type: `point` with JSON payload per location record
  *
- * 1. LOCATION CHANGED (loc event):
- *    - Sent when significant change detected:
- *      • Distance: > 20 meters
- *      • Time: > 5 minutes (even if same location)
- *      • Speed: > 5 km/h change
- *      • Bearing: > 15° change
- *    - Contains full location data (lat, lng, speed, etc.)
- *    - Includes change_reason: "distance", "time", "speed", "bearing", or "first"
+ * Why a proxy route?
+ * - Browsers' EventSource cannot set custom headers (like X-API-Token)
+ * - The proxy route forwards the stream to the backend and attaches the token
+ * - Use the proxy route from UI code
  *
- * 2. NO CHANGE (no_change event):
- *    - Sent every 30 seconds when no significant changes
- *    - Just a heartbeat to keep connection alive
- *    - Does NOT include location coordinates
- *    - Contains: {active_devices: N, timestamp: "..."}
+ * ============================================================================
+ * EVENT SCHEMA
+ * ============================================================================
  *
- * 3. DWELL BEHAVIOR (User Stationary):
- *    When user stays at same location:
- *    - First location sent immediately (reason: "first")
- *    - After 5 minutes, SAME location re-sent (reason: "time")
- *    - Every 5 minutes thereafter, location re-sent
- *    - Between updates, heartbeat events sent every 30 seconds
+ * Each `point` event carries JSON data:
  *
- * EXAMPLE TIMELINE (User dwelling at same spot):
+ * {
+ *   "device_id": "dev-123",
+ *   "user_id": 42,
+ *   "username": "adar",
+ *   "display_name": "Adar Bahar",
+ *   "latitude": 32.0777,
+ *   "longitude": 34.7733,
+ *   "accuracy": 6.0,
+ *   "altitude": 20.5,
+ *   "speed": 1.2,
+ *   "bearing": 270,
+ *   "battery_level": 0.78,
+ *   "recorded_at": "2024-10-01T12:34:56Z",
+ *   "server_time": "2024-10-01T12:34:57.001Z",
+ *   "server_timestamp": 1727786097001
+ * }
  *
- *   10:00:00 - loc event (reason: "first", lat: 32.0853, lng: 34.7818)
- *   10:00:30 - no_change event (heartbeat)
- *   10:01:00 - no_change event (heartbeat)
- *   10:01:30 - no_change event (heartbeat)
- *   ...
- *   10:05:00 - loc event (reason: "time", lat: 32.0853, lng: 34.7818) <- SAME coords
- *   10:05:30 - no_change event (heartbeat)
- *   ...
- *   10:10:00 - loc event (reason: "time", lat: 32.0853, lng: 34.7818) <- SAME coords
- *
- * TO DISPLAY "DWELLING FOR X TIME" IN UI:
- *
- *   You need to track this in your UI code:
- *
- *   let lastLocation = null;
- *   let dwellStart = null;
- *
- *   onLocation: (location) => {
- *     // Check if coordinates actually changed
- *     const coordsChanged = !lastLocation ||
- *       lastLocation.latitude !== location.latitude ||
- *       lastLocation.longitude !== location.longitude;
- *
- *     if (coordsChanged) {
- *       // Location changed - reset dwell tracking
- *       dwellStart = null;
- *       showStatus('Moving');
- *     } else {
- *       // Same location - track dwell duration
- *       if (!dwellStart) {
- *         dwellStart = new Date(location.recorded_at);
- *       }
- *       const duration = calculateDuration(dwellStart, new Date());
- *       showStatus(`Dwelling for ${duration}`);
- *     }
- *
- *     lastLocation = location;
- *     updateMap(location);
- *   }
+ * Notes:
+ * - Each event has an SSE `id` equal to `server_timestamp` for resume
+ * - Keep-alive comments look like `: keep-alive <ms>`
+ * - Keep-alives are not delivered to onmessage and do not have data
  *
  * ============================================================================
  */
 
 class LocationApiClient {
-  constructor(baseUrl = 'https://mytrips-api.bahar.co.il/location/api', apiToken = '4Q9j0INedMHobgNdJx+PqcXesQjifyl9LCE+W2phLdI=') {
-    this.baseUrl = baseUrl;
-    this.apiToken = apiToken;
-    this.sessionToken = null;
-    this.abortController = null;
+  constructor(proxyBaseUrl = '/api/location/live/sse') {
+    this.proxyBaseUrl = proxyBaseUrl;
+    this.eventSource = null;
+    this.lastEventId = null;
   }
 
   /**
