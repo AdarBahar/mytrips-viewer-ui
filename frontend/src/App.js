@@ -11,6 +11,9 @@ function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // SECURITY WARNING: Storing tokens in localStorage is vulnerable to XSS attacks.
+    // For production, consider using httpOnly cookies or a more secure storage pattern
+    // with Content Security Policy (CSP) headers.
     const token = localStorage.getItem('token');
     const userData = localStorage.getItem('user');
 
@@ -34,6 +37,7 @@ function App() {
       toast.error('Login failed: Invalid credentials');
       return;
     }
+    // SECURITY WARNING: localStorage is vulnerable to XSS. Consider httpOnly cookies.
     localStorage.setItem('token', token);
     localStorage.setItem('user', JSON.stringify(userData));
     setIsAuthenticated(true);

@@ -14,16 +14,24 @@ load_dotenv(ROOT_DIR / '.env')
 MYTRIPS_API_BASEURL = os.environ.get('MYTRIPS_API_BASEURL')
 LOC_API_TOKEN = os.environ.get('LOC_API_TOKEN')
 
+# SECURITY: Load test credentials from environment variables
+# Never commit production credentials to version control
+test_email = os.environ.get('TEST_EMAIL')
+test_password = os.environ.get('TEST_PASSWORD')
+
+if not test_email or not test_password:
+    print("❌ ERROR: TEST_EMAIL and TEST_PASSWORD environment variables must be set")
+    print("   Set them in your .env file or export them before running this script:")
+    print("   export TEST_EMAIL='your-test-email@example.com'")
+    print("   export TEST_PASSWORD='your-test-password'")
+    exit(1)
+
 print("=" * 60)
 print("MyTrips API Connection Test")
 print("=" * 60)
 print(f"API Base URL: {MYTRIPS_API_BASEURL}")
-print(f"LOC_API_TOKEN: {LOC_API_TOKEN[:20]}..." if LOC_API_TOKEN else "LOC_API_TOKEN: Not set")
+print(f"Test Email: {test_email}")
 print("=" * 60)
-
-# Test credentials
-test_email = "adar.bahar@gmail.com"
-test_password = "admin123"
 
 # Test the correct endpoint
 endpoints_to_test = [

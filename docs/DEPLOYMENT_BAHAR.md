@@ -28,7 +28,7 @@ The application uses **two separate external APIs**:
 - **Authentication**: Email/password credentials
 - **Called by**: Frontend directly
 
-### 2. Location API (`https://www.bahar.co.il/location/api`)
+### 2. Location API (`https://mytrips-api.bahar.co.il/location/api`)
 - **Purpose**: User locations, route history, driving records
 - **Endpoints**:
   - `/users.php` - Get list of users with location data
@@ -262,7 +262,7 @@ REACT_APP_GOOGLE_MAPS_API_KEY=YOUR_GOOGLE_MAPS_API_KEY_HERE
 # Location API Configuration
 # Contact your Location API administrator for the token
 REACT_APP_LOC_API_TOKEN=YOUR_LOCATION_API_TOKEN_HERE
-REACT_APP_LOC_API_BASEURL=https://www.bahar.co.il/location/api
+REACT_APP_LOC_API_BASEURL=https://mytrips-api.bahar.co.il/location/api
 
 # MyTrips API (for authentication)
 REACT_APP_MYTRIPS_API_BASEURL=https://mytrips-api.bahar.co.il
@@ -286,7 +286,7 @@ REACT_APP_GOOGLE_MAPS_API_KEY=YOUR_GOOGLE_MAPS_API_KEY_HERE
 # Location API Configuration
 # Contact your Location API administrator for the token
 REACT_APP_LOC_API_TOKEN=YOUR_LOCATION_API_TOKEN_HERE
-REACT_APP_LOC_API_BASEURL=https://www.bahar.co.il/location/api
+REACT_APP_LOC_API_BASEURL=https://mytrips-api.bahar.co.il/location/api
 
 # MyTrips API
 REACT_APP_MYTRIPS_API_BASEURL=https://mytrips-api.bahar.co.il
@@ -300,7 +300,7 @@ REACT_APP_MYTRIPS_API_BASEURL=https://mytrips-api.bahar.co.il
 - [ ] `.htaccess` file included in deployment (automatically copied during build)
 - [ ] Permissions set correctly (755 for directories, 644 for files)
 - [ ] MyTrips API accessible at `https://mytrips-api.bahar.co.il/auth/app-login`
-- [ ] Location API accessible at `https://www.bahar.co.il/location/api`
+- [ ] Location API accessible at `https://mytrips-api.bahar.co.il/location/api`
 - [ ] Google Maps API key configured and restricted to `www.bahar.co.il`
 - [ ] Test the application at `https://www.bahar.co.il/mytrips-viewer/`
 - [ ] Test authentication flow (login with credentials)
@@ -392,7 +392,7 @@ Refused to connect to 'https://maps.googleapis.com/...' because it violates the 
 ### Issue: Users not loading
 
 **Solution:**
-- Verify Location API is accessible at `https://www.bahar.co.il/location/api/users.php`
+- Verify Location API is accessible at `https://mytrips-api.bahar.co.il/location/api/users.php`
 - Check that `REACT_APP_LOC_API_TOKEN` is set correctly in `.env.production`
 - Verify both `Authorization: Bearer` and `X-API-Token` headers are being sent
 - Check browser console for 401 or 403 errors
