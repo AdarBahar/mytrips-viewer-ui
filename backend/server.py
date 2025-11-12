@@ -1,5 +1,6 @@
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -752,6 +753,85 @@ async def get_route_history(
             timestamps=timestamps
         )
 
+@api_router.get("/location/live/sse")
+async def location_live_sse(request):
+    """
+    SSE proxy endpoint for live location streaming.
+
+    This endpoint:
+    1. Accepts SSE requests from the browser at /api/location/live/sse
+    2. Injects the LOC_API_TOKEN header server-side
+    3. Forwards to MyTrips API at /location/live/sse
+    4. Streams the SSE response back to the browser
+
+    Query parameters are forwarded to the MyTrips API:
+    - all=true - Include all users/devices
+    - users=username - Repeatable, filter by username
+    - devices=device_id - Repeatable, filter by device ID
+    - since=<ms> - Resume from timestamp
+    - heartbeat=<seconds> - Keep-alive interval
+    - limit=<1-500> - Max points per cycle
+    """
+    async def stream_sse():
+        LOC_API_TOKEN = os.environ.get('LOC_API_TOKEN')
+        MYTRIPS_API_BASEURL = os.environ.get('MYTRIPS_API_BASEURL')
+
+        if not LOC_API_TOKEN:
+            logging.error("LOC_API_TOKEN not configured")
+            yield "event: error\ndata: {\"error\": \"API token not configured\"}\n\n"
+            return
+
+        if not MYTRIPS_API_BASEURL:
+            logging.error("MYTRIPS_API_BASEURL not configured")
+            yield "event: error\ndata: {\"error\": \"API base URL not configured\"}\n\n"
+            return
+
+        # Build the MyTrips API URL with query parameters
+        mytrips_url = f"{MYTRIPS_API_BASEURL}/location/live/sse"
+
+        # Copy query parameters from the request
+        query_params = dict(request.query_params)
+
+        try:
+            async with httpx.AsyncClient(timeout=None) as client:
+                # Make the request to MyTrips API with the token
+                async with client.stream(
+                    "GET",
+                    mytrips_url,
+                    params=query_params,
+                    headers={
+                        "X-API-Token": LOC_API_TOKEN,
+                        "Accept": "text/event-stream"
+                    }
+                ) as response:
+                    if response.status_code != 200:
+                        logging.error(f"MyTrips API error: {response.status_code}")
+                        yield f"event: error\ndata: {{\"error\": \"API returned {response.status_code}\"}}\n\n"
+                        return
+
+                    # Stream the response back to the browser
+                    async for line in response.aiter_lines():
+                        if line:
+                            yield line + "\n"
+                        else:
+                            yield "\n"
+
+        except httpx.TimeoutException:
+            logging.error("MyTrips API timeout")
+            yield "event: error\ndata: {\"error\": \"API timeout\"}\n\n"
+        except Exception as e:
+            logging.error(f"SSE proxy error: {str(e)}")
+            yield f"event: error\ndata: {{\"error\": \"{str(e)}\"}}\n\n"
+
+    return StreamingResponse(
+        stream_sse(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
 # SECURITY: Configure CORS with restrictive defaults
 # CORS_ORIGINS should be a comma-separated list of allowed origins
 cors_origins_str = os.environ.get('CORS_ORIGINS', '')
