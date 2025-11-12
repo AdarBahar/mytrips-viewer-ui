@@ -689,10 +689,11 @@ export default function MapDashboard({ user, onLogout }) {
 
       // Update marker position
       if (markerRef.current && googleMapRef.current) {
-        markerRef.current.setPosition({
+        // AdvancedMarkerElement uses position property, not setPosition method
+        markerRef.current.position = {
           lat: latestPoint.latitude,
           lng: latestPoint.longitude
-        });
+        };
       }
     }
   }, [points, debugMode]);
