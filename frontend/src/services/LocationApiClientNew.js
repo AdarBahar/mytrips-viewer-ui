@@ -11,7 +11,7 @@
  * BACKEND SSE ENDPOINT INTEGRATION
  * ============================================================================
  *
- * Backend SSE endpoint: `${REACT_APP_MYTRIPS_API_BASEURL}/api/location/live/sse`
+ * Backend SSE endpoint: `${REACT_APP_MYTRIPS_API_BASEURL}/location/live/sse`
  * Protocol: text/event-stream (SSE)
  * Event type: `point` with JSON payload per location record
  *
@@ -55,7 +55,7 @@
 class LocationApiClient {
   constructor(proxyBaseUrl) {
     // proxyBaseUrl should be the full backend SSE endpoint URL
-    // e.g., https://mytrips-api.bahar.co.il/api/location/live/sse
+    // e.g., https://mytrips-api.bahar.co.il/location/live/sse
     this.proxyBaseUrl = proxyBaseUrl;
     this.eventSource = null;
     this.lastEventId = null;
