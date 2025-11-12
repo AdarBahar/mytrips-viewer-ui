@@ -1,7 +1,8 @@
 import axios from 'axios';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-const API = BACKEND_URL;
+// MyTrips API for authentication (direct endpoint, no /api prefix)
+const MYTRIPS_API_BASEURL = process.env.REACT_APP_MYTRIPS_API_BASEURL;
+const API = MYTRIPS_API_BASEURL;
 
 /**
  * App Login - Stateless authentication

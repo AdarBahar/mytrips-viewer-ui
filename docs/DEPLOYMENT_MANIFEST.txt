@@ -1,0 +1,237 @@
+================================================================================
+  DEPLOYMENT MANIFEST
+================================================================================
+
+Package Name:    mytrips-viewer-production-20251029-151750.tar.gz
+Build Date:      October 29, 2025 - 15:17:50
+Build Time:      15:20 (package created)
+Branch:          code-review/non-backend-fixes
+Commit:          fb6aedd
+
+================================================================================
+  PACKAGE INFORMATION
+================================================================================
+
+File:            mytrips-viewer-production-20251029-151750.tar.gz
+Size:            1.6 MB
+SHA-256:         e491917ab0f554515360693ad918f297adca1bb506ead782877e8c0466e51226
+
+Build Artifacts:
+  - JavaScript:  main.3ffb5c43.js (141.41 KB gzipped)
+  - CSS:         main.fbfd01a8.css (9.46 KB gzipped)
+
+================================================================================
+  SECURITY FIXES
+================================================================================
+
+This package includes 9 security and reliability fixes from code review:
+
+1. ✓ Remove unused axios import (AuthPage.js)
+2. ✓ Add localStorage security warnings (App.js)
+3. ✓ Validate environment variables (MapDashboard.js)
+4. ✓ Scrub sensitive headers from debug logs (MapDashboard.js)
+5. ✓ Fix useEffect dependencies (MapDashboard.js)
+6. ✓ Load test credentials from environment (test_mytrips_api.py)
+7. ✓ Redact tokens in test output (test_location_api.py)
+8. ✓ Add DEBUG_MODE flag (server.py)
+9. ✓ Improve CORS configuration (server.py)
+
+Not Applied:
+  ✗ Move LOC_API_TOKEN to backend (requires backend infrastructure)
+
+================================================================================
+  PACKAGE CONTENTS
+================================================================================
+
+Application Files:
+  ./index.html
+  ./.htaccess
+  ./asset-manifest.json
+  ./static/js/main.3ffb5c43.js
+  ./static/js/main.3ffb5c43.js.map
+  ./static/js/main.3ffb5c43.js.LICENSE.txt
+  ./static/css/main.fbfd01a8.css
+  ./static/css/main.fbfd01a8.css.map
+
+Documentation:
+  ./DEPLOYMENT_README.md       - Detailed deployment instructions
+  ./DEPLOYMENT_SUMMARY.txt     - Quick reference guide
+  ./CODE_REVIEW_FIXES.md       - Security fixes documentation
+
+Vendor Files:
+  ./vendor/fonts/              - Custom fonts (Inter, Space Grotesk)
+  ./vendor/images/             - Static images
+  ./vendor/scripts/            - Vendor scripts
+
+================================================================================
+  DEPLOYMENT TARGETS
+================================================================================
+
+Primary:
+  URL:      https://www.bahar.co.il/mytrips-viewer/
+  Server:   www.bahar.co.il
+  Path:     ~/public_html/mytrips-viewer/
+  Method:   SCP + SSH or cPanel File Manager
+
+================================================================================
+  ENVIRONMENT CONFIGURATION
+================================================================================
+
+Embedded at Build Time:
+
+REACT_APP_GOOGLE_MAPS_API_KEY:
+  Value:  AIzaSyAso37mBqnBKwDqQacmx99WgfkW-M9uwLQ
+  Usage:  Google Maps integration
+  Note:   Should be restricted to www.bahar.co.il in Google Cloud Console
+
+REACT_APP_LOC_API_TOKEN:
+  Value:  4Q9j0INedMHobgNdJx+PqcXesQjifyl9LCE+W2phLdI=
+  Usage:  Location API authentication
+  Note:   ⚠️ Exposed in frontend bundle (known limitation)
+
+REACT_APP_LOC_API_BASEURL:
+  Value:  https://www.bahar.co.il/location/api
+  Usage:  Location API endpoint
+
+REACT_APP_MYTRIPS_API_BASEURL:
+  Value:  https://mytrips-api.bahar.co.il
+  Usage:  Authentication API endpoint
+
+================================================================================
+  DEPLOYMENT ARCHITECTURE
+================================================================================
+
+Type:     Frontend-Only (Static Files)
+Backend:  Not Required
+
+API Calls:
+  Browser → Location API (direct)
+  Browser → MyTrips API (auth only)
+
+No server-side processing required.
+
+================================================================================
+  VERIFICATION CHECKLIST
+================================================================================
+
+Pre-Deployment:
+  [ ] Package integrity verified (SHA-256 checksum)
+  [ ] Documentation reviewed
+  [ ] Backup of current deployment created
+
+Deployment:
+  [ ] Package uploaded to server
+  [ ] Extracted to correct directory
+  [ ] File permissions set (755)
+  [ ] Old files backed up or removed
+
+Post-Deployment:
+  [ ] Application loads (HTTP 200)
+  [ ] JavaScript bundle loads
+  [ ] CSS loads correctly
+  [ ] Login functionality works
+  [ ] User selection works
+  [ ] Map displays correctly
+  [ ] Debug mode shows [REDACTED] headers
+  [ ] No console errors
+
+================================================================================
+  ROLLBACK PLAN
+================================================================================
+
+If issues occur:
+
+Option 1: Restore from backup
+  cd ~/public_html
+  rm -rf mytrips-viewer
+  mv mytrips-viewer.backup mytrips-viewer
+
+Option 2: Redeploy previous package
+  cd ~/public_html/mytrips-viewer
+  tar -xzf /tmp/mytrips-viewer-20251029-144915.tar.gz --strip-components=1
+
+================================================================================
+  KNOWN ISSUES & LIMITATIONS
+================================================================================
+
+1. LOC_API_TOKEN Exposure
+   - Token is visible in JavaScript bundle
+   - Mitigation: API should have IP restrictions/rate limiting
+   - Future: Implement backend proxy
+
+2. localStorage XSS Vulnerability
+   - JWT tokens stored in localStorage
+   - Vulnerable to XSS attacks
+   - Mitigation: Implement CSP headers
+   - Future: Use httpOnly cookies via backend
+
+================================================================================
+  SUPPORT & DOCUMENTATION
+================================================================================
+
+Repository:
+  https://github.com/AdarBahar/mytrips-viewer-ui
+
+Documentation Files:
+  - README.md                  - Project overview
+  - DEPLOYMENT_README.md       - Deployment instructions (this package)
+  - DEPLOYMENT_BAHAR.md        - InMotion hosting guide
+  - CODE_REVIEW_FIXES.md       - Security fixes documentation
+  - AUTHENTICATION.md          - Authentication flow
+  - API_DOCUMENTATION.md       - API reference
+
+================================================================================
+  DEPLOYMENT COMMANDS
+================================================================================
+
+Quick Deploy:
+
+  # Upload
+  scp mytrips-viewer-production-20251029-151750.tar.gz user@www.bahar.co.il:/tmp/
+
+  # SSH
+  ssh user@www.bahar.co.il
+
+  # Backup current
+  cd ~/public_html
+  mv mytrips-viewer mytrips-viewer.backup.$(date +%Y%m%d-%H%M%S)
+  mkdir mytrips-viewer
+
+  # Extract
+  cd mytrips-viewer
+  tar -xzf /tmp/mytrips-viewer-production-20251029-151750.tar.gz
+
+  # Set permissions
+  chmod -R 755 .
+
+  # Clean up
+  rm /tmp/mytrips-viewer-production-20251029-151750.tar.gz
+
+  # Test
+  curl -I https://www.bahar.co.il/mytrips-viewer/
+
+================================================================================
+  PACKAGE VERIFICATION
+================================================================================
+
+To verify package integrity:
+
+  shasum -a 256 mytrips-viewer-production-20251029-151750.tar.gz
+
+Expected:
+  e491917ab0f554515360693ad918f297adca1bb506ead782877e8c0466e51226
+
+================================================================================
+  DEPLOYMENT STATUS
+================================================================================
+
+Status:      READY FOR PRODUCTION
+Tested:      ✓ Build successful
+             ✓ Security fixes verified
+             ✓ Documentation complete
+Approved:    Pending deployment
+
+================================================================================
+  END OF MANIFEST
+================================================================================
+

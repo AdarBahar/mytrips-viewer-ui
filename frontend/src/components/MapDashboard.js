@@ -5,12 +5,24 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Switch } from './ui/switch';
 import { toast } from 'sonner';
 import { LogOut, MapPin, Navigation, Clock, Gauge, Radio, Minimize2, Maximize2, X, Bug } from 'lucide-react';
+import { formatUTCToLocalTime } from '../utils/timestampUtils';
+import { useLiveLocations } from '../hooks/useLiveLocations';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-const API = BACKEND_URL;
+// Environment variables - validate at module load
 const GOOGLE_MAPS_API_KEY = process.env.REACT_APP_GOOGLE_MAPS_API_KEY;
 const LOC_API_BASEURL = process.env.REACT_APP_LOC_API_BASEURL;
 const LOC_API_TOKEN = process.env.REACT_APP_LOC_API_TOKEN;
+
+// Validate required environment variables
+if (!GOOGLE_MAPS_API_KEY) {
+  console.error('REACT_APP_GOOGLE_MAPS_API_KEY is not defined');
+}
+if (!LOC_API_BASEURL) {
+  console.error('REACT_APP_LOC_API_BASEURL is not defined');
+}
+if (!LOC_API_TOKEN) {
+  console.error('REACT_APP_LOC_API_TOKEN is not defined');
+}
 
 // Helper function to calculate distance between points (Haversine formula)
 const calculateDistance = (points) => {
@@ -37,6 +49,7 @@ const calculateDistance = (points) => {
 };
 
 // Helper function to generate CURL command for debugging
+// SECURITY: Scrubs sensitive headers to prevent token leakage in logs
 const generateCurlCommand = (method, url, headers, params = null, data = null) => {
   let curl = `curl -X ${method} '${url}`;
 
@@ -48,8 +61,13 @@ const generateCurlCommand = (method, url, headers, params = null, data = null) =
   curl += "'";
 
   if (headers) {
+    // Scrub sensitive headers before logging
+    const sensitiveHeaders = ['authorization', 'x-api-token', 'x-api-key', 'bearer'];
     Object.entries(headers).forEach(([key, value]) => {
-      curl += ` \\\n  -H '${key}: ${value}'`;
+      const keyLower = key.toLowerCase();
+      const isSensitive = sensitiveHeaders.some(h => keyLower.includes(h));
+      const safeValue = isSensitive ? '[REDACTED]' : value;
+      curl += ` \\\n  -H '${key}: ${safeValue}'`;
     });
   }
 
@@ -60,21 +78,84 @@ const generateCurlCommand = (method, url, headers, params = null, data = null) =
   return curl;
 };
 
+// Session management functions removed - using new SSE endpoint with query parameters instead
+
+// Reverse geocoding function to get address from coordinates
+const reverseGeocode = async (lat, lng) => {
+  try {
+    if (!window.google || !window.google.maps) {
+      console.warn('Google Maps not loaded yet');
+      return null;
+    }
+
+    const geocoder = new window.google.maps.Geocoder();
+    const latlng = { lat, lng };
+
+    return new Promise((resolve, reject) => {
+      geocoder.geocode({ location: latlng }, (results, status) => {
+        if (status === 'OK' && results && results[0]) {
+          // Get the formatted address
+          resolve(results[0].formatted_address);
+        } else {
+          console.warn('Geocoder failed:', status);
+          resolve(null);
+        }
+      });
+    });
+  } catch (error) {
+    console.error('Reverse geocoding error:', error);
+    return null;
+  }
+};
+
+// Format time ago (e.g., "5 minutes ago", "1:04 hours ago")
+const formatTimeAgo = (timestamp) => {
+  if (!timestamp) return '';
+
+  const now = new Date();
+  const then = new Date(timestamp);
+  const diffMs = now - then;
+  const diffMinutes = Math.floor(diffMs / 60000);
+
+  if (diffMinutes < 1) {
+    return 'just now';
+  } else if (diffMinutes < 60) {
+    return `${diffMinutes} minute${diffMinutes === 1 ? '' : 's'} ago`;
+  } else {
+    const hours = Math.floor(diffMinutes / 60);
+    const minutes = diffMinutes % 60;
+    return `${hours}:${minutes.toString().padStart(2, '0')} hours ago`;
+  }
+};
+
 export default function MapDashboard({ user, onLogout }) {
   const [routes, setRoutes] = useState([]);
   const [users, setUsers] = useState([]);
   const [selectedRoute, setSelectedRoute] = useState(null);
   const [selectedUser, setSelectedUser] = useState(null);
   const [currentLocation, setCurrentLocation] = useState(null);
+  const [currentAddress, setCurrentAddress] = useState(null); // Address from reverse geocoding
   const [routeHistory, setRouteHistory] = useState(null);
   const [loading, setLoading] = useState(true);
   const [isLiveTracking, setIsLiveTracking] = useState(true); // Track current location by default
   const [isMinimized, setIsMinimized] = useState(false); // Control panel minimize state
-  const [streamCursor, setStreamCursor] = useState(0); // Cursor for live stream polling
+  const [isTrackingMinimized, setIsTrackingMinimized] = useState(false); // Track Current Location card minimize state
+  const [streamCursor, setStreamCursor] = useState(0); // Cursor for live stream polling (legacy, kept for fallback)
   const [timeRange, setTimeRange] = useState('last_24_hours'); // Time range for history
   const [historyOffset, setHistoryOffset] = useState(0); // Pagination offset
   const [historyTotal, setHistoryTotal] = useState(0); // Total history records
   const [debugMode, setDebugMode] = useState(false); // Debug mode toggle
+
+  // Dwell/drive analytics
+  const [dwellDriveSegments, setDwellDriveSegments] = useState(null);
+
+  // Live location streaming using new SSE endpoint
+  const { connected: sseConnected, points, error: sseError } = useLiveLocations({
+    users: selectedUser ? [users.find(u => u.id === selectedUser)?.name || selectedUser] : [],
+    heartbeat: 10,
+    limit: 100,
+    enabled: isLiveTracking && selectedUser
+  });
 
   const mapRef = useRef(null);
   const googleMapRef = useRef(null);
@@ -86,7 +167,6 @@ export default function MapDashboard({ user, onLogout }) {
 
   // Location API headers (always use LOC_API_TOKEN for Location API calls)
   const locationApiHeaders = {
-    'Authorization': `Bearer ${LOC_API_TOKEN}`,
     'X-API-Token': LOC_API_TOKEN,
     'Accept': 'application/json'
   };
@@ -187,7 +267,6 @@ export default function MapDashboard({ user, onLogout }) {
           include_metadata: 'false'
         };
         const usersHeaders = {
-          'Authorization': `Bearer ${LOC_API_TOKEN}`,
           'X-API-Token': LOC_API_TOKEN,
           'Accept': 'application/json'
         };
@@ -195,11 +274,11 @@ export default function MapDashboard({ user, onLogout }) {
         if (debugMode) {
           console.group('🌐 API Call: Fetch Users');
           console.log('📤 CURL Command:');
-          console.log(generateCurlCommand('GET', `${LOC_API_BASEURL}/users.php`, usersHeaders, usersParams));
+          console.log(generateCurlCommand('GET', `${LOC_API_BASEURL}/users`, usersHeaders, usersParams));
           console.groupEnd();
         }
 
-        const usersRes = await axios.get(`${LOC_API_BASEURL}/users.php`, {
+        const usersRes = await axios.get(`${LOC_API_BASEURL}/users`, {
           params: usersParams,
           headers: usersHeaders
         });
@@ -211,9 +290,9 @@ export default function MapDashboard({ user, onLogout }) {
           console.groupEnd();
         }
 
-        // Parse Location API response format: {"status": "success", "data": {"users": [...]}}
-        if (usersRes.data?.status === 'success' && usersRes.data?.data?.users) {
-          const users = usersRes.data.data.users.map(user => ({
+        // Parse Location API response format: {"users": [...], "count": N, "source": "database"}
+        if (usersRes.data?.users && Array.isArray(usersRes.data.users)) {
+          const users = usersRes.data.users.map(user => ({
             id: String(user.id),
             name: user.display_name || user.username,
             status: 'active'
@@ -224,20 +303,68 @@ export default function MapDashboard({ user, onLogout }) {
           setUsers([]);
         }
       } catch (error) {
-        console.error('Failed to load data:', error);
-        toast.error('Failed to load users data');
+        console.group('❌ API Error: Fetch Users Failed');
+        console.error('Error:', error.message);
+
+        if (error.response) {
+          // Server responded with error status
+          console.error('HTTP Status:', error.response.status);
+          console.error('Status Text:', error.response.statusText);
+          console.error('Response Data:', error.response.data);
+          console.error('Response Headers:', error.response.headers);
+
+          // Specific handling for common errors
+          if (error.response.status === 504) {
+            console.error('🔴 Gateway Timeout (504): The users endpoint is not responding');
+            console.error('This usually means the backend server is down or overloaded');
+            toast.error('Server timeout - users endpoint not responding');
+          } else if (error.response.status === 503) {
+            console.error('🔴 Service Unavailable (503): The server is temporarily unavailable');
+            toast.error('Service unavailable - please try again later');
+          } else if (error.response.status === 500) {
+            console.error('🔴 Internal Server Error (500): The server encountered an error');
+            toast.error('Server error - please contact support');
+          } else if (error.response.status === 401) {
+            console.error('🔴 Unauthorized (401): Invalid or expired token');
+            toast.error('Authentication failed - please login again');
+            onLogout();
+          } else if (error.response.status === 403) {
+            console.error('🔴 Forbidden (403): Access denied');
+            toast.error('Access denied');
+          } else if (error.response.status === 404) {
+            console.error('🔴 Not Found (404): Endpoint not found');
+            toast.error('API endpoint not found');
+          } else {
+            toast.error(`Failed to load users data (HTTP ${error.response.status})`);
+          }
+        } else if (error.request) {
+          // Request was made but no response received
+          console.error('No response received from server');
+          console.error('Request:', error.request);
+          console.error('🔴 Network Error: The server did not respond');
+          console.error('Possible causes:');
+          console.error('- Server is down');
+          console.error('- Network connectivity issues');
+          console.error('- CORS policy blocking the request');
+          console.error('- Firewall blocking the connection');
+          toast.error('Network error - cannot reach server');
+        } else {
+          // Something else happened
+          console.error('Request setup error:', error.message);
+          toast.error('Failed to load users data');
+        }
+
+        console.groupEnd();
+
         // Set empty arrays on error to prevent .map() errors
         setUsers([]);
-        if (error.response?.status === 401) {
-          onLogout();
-        }
       }
     };
 
     if (token) {
       fetchData();
     }
-  }, [token]);
+  }, [token, debugMode, onLogout]); // Include all dependencies used in effect
 
   // Draw planned route
   useEffect(() => {
@@ -294,34 +421,38 @@ export default function MapDashboard({ user, onLogout }) {
         let total;
 
         if (isRecentHistory) {
-          // Use /live/history.php for recent data (≤24 hours)
+          // Use /live/history for recent data (≤24 hours) with dwell/drive analytics
           const duration = timeRange === 'last_hour' ? 3600 : 86400;
           const historyParams = {
             user: username,
             duration: duration,
             limit: 1000,
-            offset: historyOffset
+            offset: historyOffset,
+            segments: 'true' // 🆕 Request dwell/drive analytics
           };
 
           if (debugMode) {
-            console.group('🌐 API Call: Fetch Route History (Cache)');
+            console.group('🌐 API Call: Fetch Route History (Cache + Analytics)');
             console.log('📤 CURL Command:');
-            console.log(generateCurlCommand('GET', `${LOC_API_BASEURL}/live/history.php`, locationApiHeaders, historyParams));
+            console.log(generateCurlCommand('GET', `${LOC_API_BASEURL}/live/history`, locationApiHeaders, historyParams));
             console.groupEnd();
           }
 
-          response = await axios.get(`${LOC_API_BASEURL}/live/history.php`, {
+          response = await axios.get(`${LOC_API_BASEURL}/live/history`, {
             params: historyParams,
             headers: locationApiHeaders
           });
 
           if (debugMode) {
-            console.group('🌐 API Response: Fetch Route History (Cache)');
+            console.group('🌐 API Response: Fetch Route History (Cache + Analytics)');
             console.log('📥 Status:', response.status);
             console.log('📥 Response Data:', response.data);
             if (response.data?.data?.points) {
               console.log('📊 Points Count:', response.data.data.points.length);
               console.log('📊 Total Available:', response.data.data.total);
+            }
+            if (response.data?.data?.segments) {
+              console.log('📊 Segments:', response.data.data.segments);
             }
             console.groupEnd();
           }
@@ -329,9 +460,18 @@ export default function MapDashboard({ user, onLogout }) {
           if (response.data?.status === "success" && response.data?.data?.points) {
             points = response.data.data.points;
             total = response.data.data.total || points.length;
+
+            // 🆕 Store dwell/drive segments for analytics
+            if (response.data.data.segments) {
+              setDwellDriveSegments(response.data.data.segments);
+
+              if (debugMode) {
+                console.log('✅ Dwell/Drive segments loaded:', response.data.data.segments);
+              }
+            }
           }
         } else {
-          // Use /locations.php for older data (>24 hours or all time)
+          // Use /locations for older data (>24 hours or all time)
           const params = {
             user: username,
             limit: 1000,
@@ -354,11 +494,11 @@ export default function MapDashboard({ user, onLogout }) {
           if (debugMode) {
             console.group('🌐 API Call: Fetch Route History (Database)');
             console.log('📤 CURL Command:');
-            console.log(generateCurlCommand('GET', `${LOC_API_BASEURL}/locations.php`, locationApiHeaders, params));
+            console.log(generateCurlCommand('GET', `${LOC_API_BASEURL}/locations`, locationApiHeaders, params));
             console.groupEnd();
           }
 
-          response = await axios.get(`${LOC_API_BASEURL}/locations.php`, {
+          response = await axios.get(`${LOC_API_BASEURL}/locations`, {
             params,
             headers: locationApiHeaders
           });
@@ -391,7 +531,7 @@ export default function MapDashboard({ user, onLogout }) {
             distance: calculateDistance(points),
             duration: isRecentHistory
               ? Math.round(response.data.data.duration / 60)
-              : null, // Duration not available from /locations.php
+              : null, // Duration not available from /locations
             source: isRecentHistory ? 'cache' : 'database'
           });
           setHistoryTotal(total);
@@ -409,7 +549,7 @@ export default function MapDashboard({ user, onLogout }) {
     };
 
     fetchHistory();
-  }, [selectedUser, isLiveTracking, timeRange, historyOffset]); // Removed 'users' from dependencies
+  }, [selectedUser, isLiveTracking, timeRange, historyOffset, users, debugMode]); // Include all dependencies
 
   // Draw actual/history route
   useEffect(() => {
@@ -457,12 +597,12 @@ export default function MapDashboard({ user, onLogout }) {
         if (debugMode) {
           console.group('🌐 API Call: Initialize Live Tracking');
           console.log('📤 CURL Command:');
-          console.log(generateCurlCommand('GET', `${LOC_API_BASEURL}/live/latest.php`, locationApiHeaders, latestParams));
+          console.log(generateCurlCommand('GET', `${LOC_API_BASEURL}/live/latest`, locationApiHeaders, latestParams));
           console.groupEnd();
         }
 
-        // Use Location API /live/latest.php to get initial position
-        const response = await axios.get(`${LOC_API_BASEURL}/live/latest.php`, {
+        // Use Location API /live/latest to get initial position
+        const response = await axios.get(`${LOC_API_BASEURL}/live/latest`, {
           params: latestParams,
           headers: locationApiHeaders
         });
@@ -509,82 +649,69 @@ export default function MapDashboard({ user, onLogout }) {
     };
 
     initializeLiveTracking();
-  }, [selectedUser, isLiveTracking]); // Removed 'users' from dependencies
+  }, [selectedUser, isLiveTracking, users, debugMode]); // Include all dependencies
 
-  // Poll for real-time location updates using stream endpoint
+  // Handle incoming SSE points - update map with new location
   useEffect(() => {
-    if (!selectedUser || !isLiveTracking || streamCursor === 0) {
-      return;
-    }
+    if (points.length > 0) {
+      const latestPoint = points[points.length - 1];
 
-    const pollLocationStream = async () => {
-      try {
-        // Get username from selectedUser
-        const username = users.find(u => u.id === selectedUser)?.name || selectedUser;
-
-        const streamParams = {
-          user: username,
-          since: streamCursor
-        };
-
-        if (debugMode) {
-          console.group('🌐 API Call: Poll Live Stream');
-          console.log('📤 CURL Command:');
-          console.log(generateCurlCommand('GET', `${LOC_API_BASEURL}/live/stream.php`, locationApiHeaders, streamParams));
-          console.groupEnd();
-        }
-
-        // Use Location API /live/stream.php for real-time updates
-        const response = await axios.get(`${LOC_API_BASEURL}/live/stream.php`, {
-          params: streamParams,
-          headers: locationApiHeaders
-        });
-
-        if (debugMode) {
-          console.group('🌐 API Response: Poll Live Stream');
-          console.log('📥 Status:', response.status);
-          console.log('📥 Response Data:', response.data);
-          if (response.data?.data?.points) {
-            console.log('📊 New Points:', response.data.data.points.length);
-            console.log('📊 New Cursor:', response.data.data.cursor);
-          }
-          console.groupEnd();
-        }
-
-        if (response.data?.status === "success" && response.data?.data?.points?.length > 0) {
-          const points = response.data.data.points;
-          const latestPoint = points[points.length - 1]; // Get most recent point
-
-          const locationData = {
-            lat: parseFloat(latestPoint.latitude),
-            lng: parseFloat(latestPoint.longitude),
-            speed: latestPoint.speed,
-            timestamp: latestPoint.server_time,
-            accuracy: latestPoint.accuracy
-          };
-
-          if (debugMode) {
-            console.log('✅ Updating current location:', locationData);
-          }
-
-          setCurrentLocation(locationData);
-
-          // Update cursor for next poll
-          setStreamCursor(response.data.data.cursor);
-        }
-      } catch (error) {
-        console.error('Failed to fetch location stream:', error);
+      if (debugMode) {
+        console.group('📍 SSE: Point received');
+        console.log('Username:', latestPoint.username);
+        console.log('Location:', latestPoint.latitude, latestPoint.longitude);
+        console.log('Speed:', latestPoint.speed, 'km/h');
+        console.log('Battery:', latestPoint.battery_level);
+        console.log('Timestamp:', latestPoint.server_timestamp);
+        console.groupEnd();
       }
-    };
 
-    const interval = setInterval(pollLocationStream, 3000); // Poll every 3 seconds
+      // Update current location
+      const locationData = {
+        lat: latestPoint.latitude,
+        lng: latestPoint.longitude,
+        speed: latestPoint.speed,
+        timestamp: latestPoint.server_time,
+        accuracy: latestPoint.accuracy,
+        battery: latestPoint.battery_level
+      };
 
-    return () => clearInterval(interval);
-  }, [selectedUser, isLiveTracking, streamCursor]); // Removed 'users' from dependencies
+      setCurrentLocation(locationData);
+
+      // Update polyline with new point
+      if (actualPolylineRef.current && googleMapRef.current) {
+        const newPath = actualPolylineRef.current.getPath();
+        newPath.push(new window.google.maps.LatLng(
+          latestPoint.latitude,
+          latestPoint.longitude
+        ));
+      }
+
+      // Update marker position
+      if (markerRef.current && googleMapRef.current) {
+        markerRef.current.setPosition({
+          lat: latestPoint.latitude,
+          lng: latestPoint.longitude
+        });
+      }
+    }
+  }, [points, debugMode]);
+
+  // SSE connection is now managed by the useLiveLocations hook
+  // No need for manual connection management or polling fallback
 
   // Update marker for current location
   useEffect(() => {
     if (!googleMapRef.current || !currentLocation) return;
+
+    // Validate that we have valid coordinates
+    const lat = parseFloat(currentLocation.lat);
+    const lng = parseFloat(currentLocation.lng);
+
+    if (isNaN(lat) || isNaN(lng)) {
+      console.warn('Invalid location coordinates:', currentLocation);
+      return;
+    }
 
     if (markerRef.current) {
       markerRef.current.map = null;
@@ -600,14 +727,26 @@ export default function MapDashboard({ user, onLogout }) {
     markerElement.style.boxShadow = '0 2px 6px rgba(0,0,0,0.3)';
 
     markerRef.current = new window.google.maps.marker.AdvancedMarkerElement({
-      position: { lat: currentLocation.lat, lng: currentLocation.lng },
+      position: { lat, lng },
       map: googleMapRef.current,
       content: markerElement,
       title: 'Current Location'
     });
 
     // Pan to current location
-    googleMapRef.current.panTo({ lat: currentLocation.lat, lng: currentLocation.lng });
+    googleMapRef.current.panTo({ lat, lng });
+  }, [currentLocation]);
+
+  // Reverse geocode current location to get address
+  useEffect(() => {
+    if (!currentLocation || !window.google) return;
+
+    const fetchAddress = async () => {
+      const address = await reverseGeocode(currentLocation.lat, currentLocation.lng);
+      setCurrentAddress(address);
+    };
+
+    fetchAddress();
   }, [currentLocation]);
 
   return (
@@ -624,28 +763,151 @@ export default function MapDashboard({ user, onLogout }) {
 
       {/* Tracking Mode Switch - Top Right */}
       {selectedUser && (
-        <div className="absolute top-6 right-6 bg-white/95 backdrop-blur-md rounded-xl shadow-lg border border-slate-200 p-4 z-10">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2">
-              <Radio className={`h-4 w-4 ${isLiveTracking ? 'text-red-500' : 'text-slate-400'}`} />
-              <span className="text-sm font-medium text-slate-700">
-                Track Current Location
-              </span>
+        <div className={`absolute top-6 right-6 bg-white/95 backdrop-blur-md rounded-xl shadow-lg border border-slate-200 z-10 transition-all duration-300 ${isTrackingMinimized ? 'p-3' : 'p-4 max-w-sm'}`}>
+          {/* Minimized View */}
+          {isTrackingMinimized ? (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Radio className={`h-3 w-3 ${isLiveTracking ? 'text-red-500' : 'text-slate-400'}`} />
+                  <span className="text-xs font-medium text-slate-700">
+                    {isLiveTracking ? 'Current Location' : 'Route History'}
+                  </span>
+                  <Switch
+                    checked={isLiveTracking}
+                    onCheckedChange={setIsLiveTracking}
+                    className="data-[state=checked]:bg-red-500 scale-75"
+                  />
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setIsTrackingMinimized(false)}
+                  className="h-6 w-6 p-0 hover:bg-slate-100"
+                >
+                  <Maximize2 className="h-3 w-3" />
+                </Button>
+              </div>
+
+              {isLiveTracking && currentLocation && (
+                <div className="space-y-1 text-xs">
+                  <div className="font-medium text-slate-800">
+                    {users.find(u => u.id === selectedUser)?.name || 'Unknown User'}
+                  </div>
+                  <div className="flex items-start gap-1.5 text-slate-700">
+                    <MapPin className="h-3 w-3 mt-0.5 flex-shrink-0" />
+                    <span className="break-words line-clamp-2">
+                      {currentAddress || `${currentLocation.lat.toFixed(6)}, ${currentLocation.lng.toFixed(6)}`}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-slate-600">
+                    <Clock className="h-3 w-3" />
+                    <span>
+                      {formatUTCToLocalTime(currentLocation.timestamp)}
+                      <span className="text-slate-500 ml-1">
+                        ({formatTimeAgo(currentLocation.timestamp)})
+                      </span>
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
-            <Switch
-              checked={isLiveTracking}
-              onCheckedChange={setIsLiveTracking}
-              className="data-[state=checked]:bg-red-500"
-            />
-          </div>
-          <p className="text-xs text-slate-500 mt-2">
-            {isLiveTracking ? 'Showing live location updates' : 'Showing route history'}
-          </p>
+          ) : (
+            /* Maximized View */
+            <>
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Radio className={`h-4 w-4 ${isLiveTracking ? 'text-red-500' : 'text-slate-400'}`} />
+                  <span className="text-sm font-medium text-slate-700">
+                    Track Current Location
+                  </span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <Switch
+                    checked={isLiveTracking}
+                    onCheckedChange={setIsLiveTracking}
+                    className="data-[state=checked]:bg-red-500"
+                  />
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setIsTrackingMinimized(true)}
+                    className="h-7 w-7 p-0 hover:bg-slate-100 ml-1"
+                  >
+                    <Minimize2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              </div>
+
+              <p className="text-xs text-slate-500 mt-2">
+                {isLiveTracking ? 'Showing live location updates' : 'Showing route history'}
+              </p>
+
+              {/* User Name */}
+              {isLiveTracking && (
+                <div className="mt-3 pt-3 border-t border-slate-200">
+                  <div className="text-sm font-semibold text-slate-800">
+                    {users.find(u => u.id === selectedUser)?.name || 'Unknown User'}
+                  </div>
+                </div>
+              )}
+
+              {/* Connection Status */}
+              {isLiveTracking && (
+                <div className="mt-3 pt-3 border-t border-slate-200">
+                  <div className="flex items-center gap-2">
+                    <div className={`h-2 w-2 rounded-full ${sseConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
+                    <span className="text-xs text-slate-600">
+                      {sseConnected ? 'Real-time streaming active' : sseError || 'Connecting...'}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* Live Location Info */}
+              {isLiveTracking && currentLocation && (
+                <div className="mt-3 pt-3 border-t border-slate-200">
+                  <h4 className="text-xs font-semibold text-slate-800 mb-2 flex items-center gap-2">
+                    <div className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
+                    Live Location
+                  </h4>
+                  <div className="space-y-2 text-xs">
+                    <div className="flex items-start gap-2 text-slate-700">
+                      <MapPin className="h-3 w-3 mt-0.5 flex-shrink-0" />
+                      <span className="break-words">
+                        {currentAddress || `${currentLocation.lat.toFixed(6)}, ${currentLocation.lng.toFixed(6)}`}
+                      </span>
+                    </div>
+                    {currentLocation.speed !== undefined && currentLocation.speed !== null && (
+                      <div className="flex items-center gap-2 text-slate-700">
+                        <Gauge className="h-3 w-3" />
+                        <span>{currentLocation.speed.toFixed(1)} km/h</span>
+                      </div>
+                    )}
+                    <div className="flex items-start gap-2 text-slate-700">
+                      <Clock className="h-3 w-3 mt-0.5" />
+                      <div className="flex flex-col">
+                        <span>{formatUTCToLocalTime(currentLocation.timestamp)}</span>
+                        <span className="text-slate-500">
+                          {formatTimeAgo(currentLocation.timestamp)}
+                        </span>
+                      </div>
+                    </div>
+                    {currentLocation.accuracy && (
+                      <div className="text-xs text-slate-500">
+                        Accuracy: ±{currentLocation.accuracy}m
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
         </div>
       )}
 
       {/* Control Panel */}
-      <div className="absolute top-6 left-6 bg-white/95 backdrop-blur-md rounded-2xl shadow-2xl border border-slate-200 z-10 transition-all duration-300">
+      <div className="absolute top-24 left-6 bg-white/95 backdrop-blur-md rounded-2xl shadow-2xl border border-slate-200 z-10 transition-all duration-300">
         <div className={`${isMinimized ? 'p-4' : 'p-6'} ${isMinimized ? 'w-auto' : 'w-80'}`}>
           <div className="flex items-center justify-between gap-3">
             <h2 className={`font-bold text-slate-800 ${isMinimized ? 'text-lg' : 'text-2xl'}`} style={{ fontFamily: 'Space Grotesk, sans-serif' }}>
@@ -814,32 +1076,6 @@ export default function MapDashboard({ user, onLogout }) {
             </div>
           )}
 
-          {/* Current Location Info (Live Tracking) */}
-          {isLiveTracking && currentLocation && (
-            <div className="mt-4 p-4 bg-gradient-to-br from-red-50 to-orange-50 rounded-xl border border-red-200">
-              <h3 className="text-sm font-semibold text-slate-800 mb-3 flex items-center gap-2">
-                <div className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
-                Live Location
-              </h3>
-              <div className="space-y-2 text-xs">
-                <div className="flex items-center gap-2 text-slate-700">
-                  <MapPin className="h-3 w-3" />
-                  <span>{currentLocation.lat.toFixed(6)}, {currentLocation.lng.toFixed(6)}</span>
-                </div>
-                {currentLocation.speed && (
-                  <div className="flex items-center gap-2 text-slate-700">
-                    <Gauge className="h-3 w-3" />
-                    <span>{currentLocation.speed.toFixed(1)} km/h</span>
-                  </div>
-                )}
-                <div className="flex items-center gap-2 text-slate-700">
-                  <Clock className="h-3 w-3" />
-                  <span>{new Date(currentLocation.timestamp).toLocaleTimeString()}</span>
-                </div>
-              </div>
-            </div>
-          )}
-
           {/* Route History Info (History Mode) */}
           {!isLiveTracking && routeHistory && (
             <div className="mt-4 p-4 bg-gradient-to-br from-emerald-50 to-teal-50 rounded-xl border border-emerald-200">
@@ -875,6 +1111,38 @@ export default function MapDashboard({ user, onLogout }) {
                   </div>
                 )}
               </div>
+
+              {/* Dwell/Drive Analytics */}
+              {dwellDriveSegments && dwellDriveSegments.length > 0 && (
+                <div className="mt-3 pt-3 border-t border-emerald-200">
+                  <h4 className="text-xs font-semibold text-slate-800 mb-2">Movement Analysis</h4>
+                  <div className="space-y-1 text-xs">
+                    {dwellDriveSegments.map((segment, index) => (
+                      <div key={index} className="flex items-center gap-2">
+                        {segment.type === 'drive' ? (
+                          <>
+                            <Navigation className="h-3 w-3 text-blue-600" />
+                            <span className="text-slate-700">
+                              Driving: {segment.distance?.toFixed(2)} km, {Math.round(segment.duration / 60)} min
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <MapPin className="h-3 w-3 text-orange-600" />
+                            <span className="text-slate-700">
+                              Stopped: {Math.round(segment.duration / 60)} min
+                            </span>
+                          </>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-2 text-xs text-slate-500">
+                    {dwellDriveSegments.filter(s => s.type === 'drive').length} driving segments,
+                    {' '}{dwellDriveSegments.filter(s => s.type === 'dwell').length} stops
+                  </div>
+                </div>
+              )}
 
               {/* Pagination Controls */}
               {historyTotal > routeHistory.count && (

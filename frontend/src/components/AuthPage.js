@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import axios from 'axios';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
@@ -188,27 +187,6 @@ export default function AuthPage({ onLogin }) {
             {isLogin ? "Don't have an account? Register" : 'Already have an account? Login'}
           </button>
         </div>
-
-        {/* Info about current auth method */}
-        {isLogin && (
-          <div className="mt-4 p-3 bg-blue-50 rounded-lg">
-            <p className="text-xs text-slate-600 text-center">
-              {useAppLogin ? (
-                <>
-                  <strong>App Login:</strong> Stateless authentication using email
-                  <br />
-                  <span className="text-slate-500">Use: testuser@example.com / password123</span>
-                </>
-              ) : (
-                <>
-                  <strong>JWT Login:</strong> Token-based authentication using username
-                  <br />
-                  <span className="text-slate-500">Use: testuser / password123</span>
-                </>
-              )}
-            </p>
-          </div>
-        )}
       </div>
     </div>
   );

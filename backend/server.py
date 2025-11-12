@@ -1,5 +1,6 @@
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -16,6 +17,12 @@ import httpx
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
+
+# SECURITY: Debug mode configuration
+# When DEBUG_MODE is false, sensitive data (emails, tokens, API responses) will not be logged
+DEBUG_MODE = os.environ.get('DEBUG_MODE', 'false').lower() == 'true'
+if DEBUG_MODE:
+    logging.warning("⚠️  DEBUG MODE IS ENABLED - Sensitive data will be logged. DO NOT USE IN PRODUCTION!")
 
 # Mock authentication configuration
 MOCK_AUTH_ENABLED = os.environ.get('MOCK_AUTH_ENABLED', 'false').lower() == 'true'
@@ -264,8 +271,13 @@ async def app_login(credentials: AppLoginRequest):
             # Call MyTrips API app-login endpoint
             login_url = f"{MYTRIPS_API_BASEURL}/auth/app-login"
 
-            logging.info(f"Attempting login to MyTrips API: {login_url}")
-            logging.info(f"Email: {credentials.email}")
+            # SECURITY: Only log sensitive data in debug mode
+            if DEBUG_MODE:
+                logging.debug(f"Attempting login to MyTrips API: {login_url}")
+                logging.debug(f"Email: {credentials.email}")
+            else:
+                # Log request ID or non-sensitive identifier instead
+                logging.info(f"Attempting login to MyTrips API")
 
             response = await client.post(
                 login_url,
@@ -279,8 +291,12 @@ async def app_login(credentials: AppLoginRequest):
                 }
             )
 
-            logging.info(f"MyTrips API response status: {response.status_code}")
-            logging.info(f"MyTrips API response body: {response.text[:500]}")  # First 500 chars
+            # SECURITY: Only log response body in debug mode (may contain tokens)
+            if DEBUG_MODE:
+                logging.debug(f"MyTrips API response status: {response.status_code}")
+                logging.debug(f"MyTrips API response body: {response.text[:500]}")
+            else:
+                logging.info(f"MyTrips API response status: {response.status_code}")
 
             # Check response status
             if response.status_code == 200:
@@ -737,11 +753,106 @@ async def get_route_history(
             timestamps=timestamps
         )
 
+@api_router.get("/location/live/sse")
+async def location_live_sse(request):
+    """
+    SSE proxy endpoint for live location streaming.
+
+    This endpoint:
+    1. Accepts SSE requests from the browser at /api/location/live/sse
+    2. Injects the LOC_API_TOKEN header server-side
+    3. Forwards to MyTrips API at /location/live/sse
+    4. Streams the SSE response back to the browser
+
+    Query parameters are forwarded to the MyTrips API:
+    - all=true - Include all users/devices
+    - users=username - Repeatable, filter by username
+    - devices=device_id - Repeatable, filter by device ID
+    - since=<ms> - Resume from timestamp
+    - heartbeat=<seconds> - Keep-alive interval
+    - limit=<1-500> - Max points per cycle
+    """
+    async def stream_sse():
+        LOC_API_TOKEN = os.environ.get('LOC_API_TOKEN')
+        MYTRIPS_API_BASEURL = os.environ.get('MYTRIPS_API_BASEURL')
+
+        if not LOC_API_TOKEN:
+            logging.error("LOC_API_TOKEN not configured")
+            yield "event: error\ndata: {\"error\": \"API token not configured\"}\n\n"
+            return
+
+        if not MYTRIPS_API_BASEURL:
+            logging.error("MYTRIPS_API_BASEURL not configured")
+            yield "event: error\ndata: {\"error\": \"API base URL not configured\"}\n\n"
+            return
+
+        # Build the MyTrips API URL with query parameters
+        mytrips_url = f"{MYTRIPS_API_BASEURL}/location/live/sse"
+
+        # Copy query parameters from the request
+        query_params = dict(request.query_params)
+
+        try:
+            async with httpx.AsyncClient(timeout=None) as client:
+                # Make the request to MyTrips API with the token
+                async with client.stream(
+                    "GET",
+                    mytrips_url,
+                    params=query_params,
+                    headers={
+                        "X-API-Token": LOC_API_TOKEN,
+                        "Accept": "text/event-stream"
+                    }
+                ) as response:
+                    if response.status_code != 200:
+                        logging.error(f"MyTrips API error: {response.status_code}")
+                        yield f"event: error\ndata: {{\"error\": \"API returned {response.status_code}\"}}\n\n"
+                        return
+
+                    # Stream the response back to the browser
+                    async for line in response.aiter_lines():
+                        if line:
+                            yield line + "\n"
+                        else:
+                            yield "\n"
+
+        except httpx.TimeoutException:
+            logging.error("MyTrips API timeout")
+            yield "event: error\ndata: {\"error\": \"API timeout\"}\n\n"
+        except Exception as e:
+            logging.error(f"SSE proxy error: {str(e)}")
+            yield f"event: error\ndata: {{\"error\": \"{str(e)}\"}}\n\n"
+
+    return StreamingResponse(
+        stream_sse(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+# SECURITY: Configure CORS with restrictive defaults
+# CORS_ORIGINS should be a comma-separated list of allowed origins
+cors_origins_str = os.environ.get('CORS_ORIGINS', '')
+if not cors_origins_str:
+    # Default to localhost for development
+    cors_origins = ['http://localhost:3000', 'http://localhost:5173']
+    logging.warning("⚠️  CORS_ORIGINS not set - using development defaults. Set CORS_ORIGINS in production!")
+elif cors_origins_str == '*':
+    logging.error("❌ CORS_ORIGINS='*' is insecure! Specify allowed origins explicitly.")
+    cors_origins = ['*']
+else:
+    cors_origins = [origin.strip() for origin in cors_origins_str.split(',')]
+
+logging.info(f"CORS allowed origins: {cors_origins}")
+
 # Add CORS middleware BEFORE including routes
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_origins=cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
