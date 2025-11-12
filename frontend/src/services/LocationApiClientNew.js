@@ -1,25 +1,27 @@
 /**
  * Location API Client - SSE Integration with Backend Proxy
  *
- * This version uses the backend's `/api/location/live/sse` endpoint with EventSource.
- * The backend injects X-API-Token server-side, so no custom headers needed.
+ * This version uses the backend's `/api/location/live/sse` proxy endpoint with EventSource.
+ * The backend proxy injects X-API-Token server-side, so no custom headers needed from browser.
  *
- * @version 3.1.0-backend-proxy
+ * @version 3.1.1-backend-proxy-fixed
  * @date 2025-11-12
  *
  * ============================================================================
- * BACKEND SSE ENDPOINT INTEGRATION
+ * BACKEND SSE PROXY ENDPOINT INTEGRATION
  * ============================================================================
  *
- * Backend SSE endpoint: `${REACT_APP_MYTRIPS_API_BASEURL}/location/live/sse`
+ * Backend proxy endpoint: `${REACT_APP_MYTRIPS_API_BASEURL}/api/location/live/sse`
+ * Canonical endpoint (requires token): `${REACT_APP_MYTRIPS_API_BASEURL}/location/live/sse`
  * Protocol: text/event-stream (SSE)
  * Event type: `point` with JSON payload per location record
  *
  * How it works:
- * - Browser calls backend SSE endpoint directly (cross-origin, CORS enabled)
- * - Backend injects X-API-Token header server-side
- * - Backend forwards to MyTrips API and streams response back
+ * - Browser calls backend PROXY endpoint at /api/location/live/sse (cross-origin, CORS enabled)
+ * - Backend proxy injects X-API-Token header server-side
+ * - Backend proxy forwards to canonical endpoint and streams response back
  * - No custom headers needed from browser (EventSource limitation)
+ * - Token never exposed to browser
  *
  * ============================================================================
  * EVENT SCHEMA
@@ -54,8 +56,9 @@
 
 class LocationApiClient {
   constructor(proxyBaseUrl) {
-    // proxyBaseUrl should be the full backend SSE endpoint URL
-    // e.g., https://mytrips-api.bahar.co.il/location/live/sse
+    // proxyBaseUrl should be the full backend SSE PROXY endpoint URL
+    // e.g., https://mytrips-api.bahar.co.il/api/location/live/sse
+    // NOT the canonical endpoint which requires X-API-Token header
     this.proxyBaseUrl = proxyBaseUrl;
     this.eventSource = null;
     this.lastEventId = null;
