@@ -832,7 +832,6 @@ async def location_live_sse(request):
             "X-Accel-Buffering": "no"
         }
     )
-
 # SECURITY: Configure CORS with restrictive defaults
 # CORS_ORIGINS should be a comma-separated list of allowed origins
 cors_origins_str = os.environ.get('CORS_ORIGINS', '')
