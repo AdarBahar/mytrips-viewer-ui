@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import LocationApiClient from '../services/LocationApiClientNew';
 
-// Use same-origin proxy for SSE endpoint
-// The backend proxy at /api/location/live/sse forwards to MyTrips API
-// and injects the LOC_API_TOKEN server-side for security
-const SSE_ENDPOINT_URL = '/api/location/live/sse';
+// Use backend proxy for SSE endpoint
+// The backend at REACT_APP_MYTRIPS_API_BASEURL/api/location/live/sse
+// injects the LOC_API_TOKEN server-side for security
+const SSE_ENDPOINT_URL = `${process.env.REACT_APP_MYTRIPS_API_BASEURL}/api/location/live/sse`;
 
 /**
  * Live location point data structure
