@@ -700,11 +700,51 @@ export default function MapDashboard({ user, onLogout }) {
           }
 
           setCurrentLocation(locationData);
+          setIsLive(true); // Mark as live since we got recent data
 
           // Set cursor to now for streaming
           setStreamCursor(Date.now());
         } else {
-          toast.info('No recent location data available');
+          // No recent location - try to fetch last known location
+          if (debugMode) {
+            console.log('⚠️ No recent location found, fetching last known location...');
+          }
+
+          // Fetch last known location with include_inactive=true
+          const lastKnownParams = {
+            user: username,
+            all: 'false',
+            include_inactive: 'true' // Get last known even if old
+          };
+
+          const lastKnownResponse = await axios.get(`${LOC_API_BASEURL}/live/latest`, {
+            params: lastKnownParams,
+            headers: getLocationApiHeaders()
+          });
+
+          if (lastKnownResponse.data?.status === "success" && lastKnownResponse.data?.data?.locations?.length > 0) {
+            const location = lastKnownResponse.data.data.locations[0];
+            const locationData = {
+              lat: parseFloat(location.latitude),
+              lng: parseFloat(location.longitude),
+              speed: location.speed,
+              battery: location.battery_level,
+              timestamp: location.server_time,
+              accuracy: location.accuracy,
+              age_seconds: location.age_seconds,
+              is_recent: location.is_recent
+            };
+
+            if (debugMode) {
+              console.log('✅ Setting last known location:', locationData);
+            }
+
+            setCurrentLocation(locationData);
+            setIsLive(false); // Mark as not live since this is last known
+            toast.info('No current location available - showing last known location');
+          } else {
+            toast.info('No location data available for this user');
+          }
         }
       } catch (error) {
         console.error('Failed to fetch initial location:', error);
@@ -981,11 +1021,12 @@ export default function MapDashboard({ user, onLogout }) {
                 <div className="mt-3 pt-3 border-t border-slate-200">
                   <h4 className="text-xs font-semibold text-slate-800 mb-2 flex items-center gap-2">
                     <div className={`h-2 w-2 rounded-full ${isLive ? 'bg-red-500 animate-pulse' : 'bg-gray-400'}`} />
-                    {isLive ? 'Live Location' : 'Last Known Location'}
+                    {isLive ? 'Live Location' : 'Live Location - Not Available'}
                   </h4>
                   {!isLive && (
                     <div className="mb-2 p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800">
-                      📍 Last seen {formatTimeAgo(currentLocation.timestamp)}
+                      <div className="font-semibold mb-1">Last Known Location</div>
+                      <div>Last seen {formatTimeAgo(currentLocation.timestamp)}</div>
                     </div>
                   )}
                   <div className="space-y-2 text-xs">
