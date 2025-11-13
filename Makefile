@@ -66,9 +66,33 @@ dev-frontend:
 	@bash -c "source ~/.zshrc 2>/dev/null || true; npm start"
 
 # Build frontend for production
+# Environment variables are embedded at build time
+# Reads from frontend/.env.production if it exists
+# Usage: make build (uses frontend/.env.production)
+#        make build REACT_APP_GOOGLE_MAPS_API_KEY=xxx REACT_APP_LOC_API_TOKEN=xxx
 build:
 	@echo "🏗️  Building frontend for production..."
-	@bash -c "source ~/.zshrc 2>/dev/null || true; NODE_ENV=production npm run build"
+	@if [ -f frontend/.env.production ]; then \
+		echo "📂 Loading environment variables from frontend/.env.production"; \
+		echo ""; \
+		bash -c "source ~/.zshrc 2>/dev/null || true; \
+			set -a; \
+			source frontend/.env.production; \
+			set +a; \
+			NODE_ENV=production \
+			REACT_APP_LOC_API_BASEURL=$${REACT_APP_LOC_API_BASEURL:-https://mytrips-api.bahar.co.il/location/api} \
+			REACT_APP_MYTRIPS_API_BASEURL=$${REACT_APP_MYTRIPS_API_BASEURL:-https://mytrips-api.bahar.co.il} \
+			npm run build"; \
+	else \
+		echo "⚠️  frontend/.env.production not found!"; \
+		echo "📋 Using environment variables from shell or defaults"; \
+		echo ""; \
+		bash -c "source ~/.zshrc 2>/dev/null || true; \
+			NODE_ENV=production \
+			REACT_APP_LOC_API_BASEURL=$${REACT_APP_LOC_API_BASEURL:-https://mytrips-api.bahar.co.il/location/api} \
+			REACT_APP_MYTRIPS_API_BASEURL=$${REACT_APP_MYTRIPS_API_BASEURL:-https://mytrips-api.bahar.co.il} \
+			npm run build"; \
+	fi
 	@echo "📄 Copying .htaccess to build directory..."
 	@cp .htaccess build/.htaccess
 	@echo ""

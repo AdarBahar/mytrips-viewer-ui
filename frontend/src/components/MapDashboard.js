@@ -5,7 +5,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Switch } from './ui/switch';
 import { toast } from 'sonner';
 import { LogOut, MapPin, Navigation, Clock, Gauge, Radio, Minimize2, Maximize2, X, Bug } from 'lucide-react';
-import { formatUTCToLocalTime } from '../utils/timestampUtils';
+import { formatUTCToLocalTime, formatTimeAgo as formatTimeAgoUtil } from '../utils/timestampUtils';
 import { useLiveLocations } from '../hooks/useLiveLocations';
 
 // Environment variables - validate at module load
@@ -109,23 +109,9 @@ const reverseGeocode = async (lat, lng) => {
 };
 
 // Format time ago (e.g., "5 minutes ago", "1:04 hours ago")
+// Uses the utility function which properly handles UTC timestamps
 const formatTimeAgo = (timestamp) => {
-  if (!timestamp) return '';
-
-  const now = new Date();
-  const then = new Date(timestamp);
-  const diffMs = now - then;
-  const diffMinutes = Math.floor(diffMs / 60000);
-
-  if (diffMinutes < 1) {
-    return 'just now';
-  } else if (diffMinutes < 60) {
-    return `${diffMinutes} minute${diffMinutes === 1 ? '' : 's'} ago`;
-  } else {
-    const hours = Math.floor(diffMinutes / 60);
-    const minutes = diffMinutes % 60;
-    return `${hours}:${minutes.toString().padStart(2, '0')} hours ago`;
-  }
+  return formatTimeAgoUtil(timestamp);
 };
 
 export default function MapDashboard({ user, onLogout }) {
@@ -792,9 +778,18 @@ export default function MapDashboard({ user, onLogout }) {
 
               {isLiveTracking && currentLocation && (
                 <div className="space-y-1 text-xs">
-                  <div className="font-medium text-slate-800">
+                  <button
+                    onClick={() => {
+                      if (googleMapRef.current && currentLocation) {
+                        googleMapRef.current.panTo({ lat: currentLocation.lat, lng: currentLocation.lng });
+                        googleMapRef.current.setZoom(16);
+                      }
+                    }}
+                    className="font-medium text-slate-800 hover:text-blue-600 hover:underline cursor-pointer transition-colors text-left"
+                    title="Click to center map on current location"
+                  >
                     {users.find(u => u.id === selectedUser)?.name || 'Unknown User'}
-                  </div>
+                  </button>
                   <div className="flex items-start gap-1.5 text-slate-700">
                     <MapPin className="h-3 w-3 mt-0.5 flex-shrink-0" />
                     <span className="break-words line-clamp-2">
@@ -847,9 +842,18 @@ export default function MapDashboard({ user, onLogout }) {
               {/* User Name */}
               {isLiveTracking && (
                 <div className="mt-3 pt-3 border-t border-slate-200">
-                  <div className="text-sm font-semibold text-slate-800">
+                  <button
+                    onClick={() => {
+                      if (googleMapRef.current && currentLocation) {
+                        googleMapRef.current.panTo({ lat: currentLocation.lat, lng: currentLocation.lng });
+                        googleMapRef.current.setZoom(16);
+                      }
+                    }}
+                    className="text-sm font-semibold text-slate-800 hover:text-blue-600 hover:underline cursor-pointer transition-colors text-left w-full"
+                    title="Click to center map on current location"
+                  >
                     {users.find(u => u.id === selectedUser)?.name || 'Unknown User'}
-                  </div>
+                  </button>
                 </div>
               )}
 
