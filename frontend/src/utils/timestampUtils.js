@@ -107,9 +107,19 @@ export const formatTimeAgo = (timestamp) => {
   if (!timestamp) return '';
 
   try {
+    // Get current time in UTC (not local time)
     const now = new Date();
     const then = new Date(timestamp);
-    const diffMs = now - then;
+
+    // Ensure both dates are valid
+    if (isNaN(then.getTime())) {
+      console.warn('Invalid timestamp:', timestamp);
+      return '';
+    }
+
+    // Calculate difference in milliseconds
+    // Both dates are automatically in UTC when created from ISO strings
+    const diffMs = now.getTime() - then.getTime();
     const diffMinutes = Math.floor(diffMs / 60000);
 
     if (diffMinutes < 1) {

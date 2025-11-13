@@ -5,7 +5,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Switch } from './ui/switch';
 import { toast } from 'sonner';
 import { LogOut, MapPin, Navigation, Clock, Gauge, Radio, Minimize2, Maximize2, X, Bug } from 'lucide-react';
-import { formatUTCToLocalTime } from '../utils/timestampUtils';
+import { formatUTCToLocalTime, formatTimeAgo as formatTimeAgoUtil } from '../utils/timestampUtils';
 import { useLiveLocations } from '../hooks/useLiveLocations';
 
 // Environment variables - validate at module load
@@ -109,23 +109,9 @@ const reverseGeocode = async (lat, lng) => {
 };
 
 // Format time ago (e.g., "5 minutes ago", "1:04 hours ago")
+// Uses the utility function which properly handles UTC timestamps
 const formatTimeAgo = (timestamp) => {
-  if (!timestamp) return '';
-
-  const now = new Date();
-  const then = new Date(timestamp);
-  const diffMs = now - then;
-  const diffMinutes = Math.floor(diffMs / 60000);
-
-  if (diffMinutes < 1) {
-    return 'just now';
-  } else if (diffMinutes < 60) {
-    return `${diffMinutes} minute${diffMinutes === 1 ? '' : 's'} ago`;
-  } else {
-    const hours = Math.floor(diffMinutes / 60);
-    const minutes = diffMinutes % 60;
-    return `${hours}:${minutes.toString().padStart(2, '0')} hours ago`;
-  }
+  return formatTimeAgoUtil(timestamp);
 };
 
 export default function MapDashboard({ user, onLogout }) {
