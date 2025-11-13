@@ -66,9 +66,21 @@ dev-frontend:
 	@bash -c "source ~/.zshrc 2>/dev/null || true; npm start"
 
 # Build frontend for production
+# Environment variables are embedded at build time
+# Usage: make build GOOGLE_MAPS_API_KEY=xxx LOC_API_TOKEN=xxx
 build:
 	@echo "🏗️  Building frontend for production..."
-	@bash -c "source ~/.zshrc 2>/dev/null || true; NODE_ENV=production npm run build"
+	@echo "📋 Environment variables:"
+	@echo "   REACT_APP_GOOGLE_MAPS_API_KEY: $${REACT_APP_GOOGLE_MAPS_API_KEY:-[not set]}"
+	@echo "   REACT_APP_LOC_API_TOKEN: $${REACT_APP_LOC_API_TOKEN:-[not set]}"
+	@echo "   REACT_APP_LOC_API_BASEURL: $${REACT_APP_LOC_API_BASEURL:-https://mytrips-api.bahar.co.il/location/api}"
+	@echo "   REACT_APP_MYTRIPS_API_BASEURL: $${REACT_APP_MYTRIPS_API_BASEURL:-https://mytrips-api.bahar.co.il}"
+	@echo ""
+	@bash -c "source ~/.zshrc 2>/dev/null || true; \
+		NODE_ENV=production \
+		REACT_APP_LOC_API_BASEURL=$${REACT_APP_LOC_API_BASEURL:-https://mytrips-api.bahar.co.il/location/api} \
+		REACT_APP_MYTRIPS_API_BASEURL=$${REACT_APP_MYTRIPS_API_BASEURL:-https://mytrips-api.bahar.co.il} \
+		npm run build"
 	@echo "📄 Copying .htaccess to build directory..."
 	@cp .htaccess build/.htaccess
 	@echo ""
