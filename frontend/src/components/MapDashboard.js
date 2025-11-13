@@ -792,9 +792,18 @@ export default function MapDashboard({ user, onLogout }) {
 
               {isLiveTracking && currentLocation && (
                 <div className="space-y-1 text-xs">
-                  <div className="font-medium text-slate-800">
+                  <button
+                    onClick={() => {
+                      if (googleMapRef.current && currentLocation) {
+                        googleMapRef.current.panTo({ lat: currentLocation.lat, lng: currentLocation.lng });
+                        googleMapRef.current.setZoom(16);
+                      }
+                    }}
+                    className="font-medium text-slate-800 hover:text-blue-600 hover:underline cursor-pointer transition-colors text-left"
+                    title="Click to center map on current location"
+                  >
                     {users.find(u => u.id === selectedUser)?.name || 'Unknown User'}
-                  </div>
+                  </button>
                   <div className="flex items-start gap-1.5 text-slate-700">
                     <MapPin className="h-3 w-3 mt-0.5 flex-shrink-0" />
                     <span className="break-words line-clamp-2">
@@ -847,9 +856,18 @@ export default function MapDashboard({ user, onLogout }) {
               {/* User Name */}
               {isLiveTracking && (
                 <div className="mt-3 pt-3 border-t border-slate-200">
-                  <div className="text-sm font-semibold text-slate-800">
+                  <button
+                    onClick={() => {
+                      if (googleMapRef.current && currentLocation) {
+                        googleMapRef.current.panTo({ lat: currentLocation.lat, lng: currentLocation.lng });
+                        googleMapRef.current.setZoom(16);
+                      }
+                    }}
+                    className="text-sm font-semibold text-slate-800 hover:text-blue-600 hover:underline cursor-pointer transition-colors text-left w-full"
+                    title="Click to center map on current location"
+                  >
                     {users.find(u => u.id === selectedUser)?.name || 'Unknown User'}
-                  </div>
+                  </button>
                 </div>
               )}
 
