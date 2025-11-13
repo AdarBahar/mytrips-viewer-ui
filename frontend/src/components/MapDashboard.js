@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { LogOut, MapPin, Navigation, Clock, Gauge, Radio, Minimize2, Maximize2, X, Bug } from 'lucide-react';
 import { formatUTCToLocalTime, formatTimeAgo as formatTimeAgoUtil } from '../utils/timestampUtils';
 import { useLiveLocations } from '../hooks/useLiveLocations';
+import './MapDashboard.css';
 
 // Environment variables - validate at module load
 const GOOGLE_MAPS_API_KEY = process.env.REACT_APP_GOOGLE_MAPS_API_KEY;
@@ -23,6 +24,12 @@ if (!LOC_API_BASEURL) {
 if (!LOC_API_TOKEN) {
   console.error('REACT_APP_LOC_API_TOKEN is not defined');
 }
+
+// Helper function to get Location API headers
+const getLocationApiHeaders = () => ({
+  'X-API-Token': LOC_API_TOKEN,
+  'Accept': 'application/json'
+});
 
 // Helper function to calculate distance between points (Haversine formula)
 const calculateDistance = (points) => {
@@ -135,6 +142,13 @@ export default function MapDashboard({ user, onLogout }) {
   // Dwell/drive analytics
   const [dwellDriveSegments, setDwellDriveSegments] = useState(null);
 
+  // Last known location tracking
+  const [lastKnownLocation, setLastKnownLocation] = useState(null);
+  const [isLive, setIsLive] = useState(true); // Track if showing live or last known location
+  const [lastPointReceivedTime, setLastPointReceivedTime] = useState(null);
+  const noPointsGracePeriodTimerRef = useRef(null);
+  const GRACE_PERIOD_MS = 20000; // 20 seconds (2x heartbeat of 10s)
+
   // Live location streaming using new SSE endpoint
   const { connected: sseConnected, points, error: sseError } = useLiveLocations({
     users: selectedUser ? [users.find(u => u.id === selectedUser)?.name || selectedUser] : [],
@@ -151,11 +165,68 @@ export default function MapDashboard({ user, onLogout }) {
 
   const token = localStorage.getItem('token');
 
-  // Location API headers (always use LOC_API_TOKEN for Location API calls)
-  const locationApiHeaders = {
-    'X-API-Token': LOC_API_TOKEN,
-    'Accept': 'application/json'
-  };
+  // Fetch latest known location when SSE stops sending points
+  const fetchLatestKnownLocation = useCallback(async () => {
+    if (!selectedUser) return;
+
+    try {
+      const username = users.find(u => u.id === selectedUser)?.name || selectedUser;
+
+      const latestParams = {
+        user: username,
+        all: 'false',
+        include_inactive: 'true' // Get last known even if old
+      };
+
+      const headers = {
+        'X-API-Token': LOC_API_TOKEN,
+        'Accept': 'application/json'
+      };
+
+      if (debugMode) {
+        console.group('🌐 API Call: Fetch Latest Known Location');
+        console.log('📤 CURL Command:');
+        console.log(generateCurlCommand('GET', `${LOC_API_BASEURL}/live/latest`, headers, latestParams));
+        console.groupEnd();
+      }
+
+      const response = await axios.get(`${LOC_API_BASEURL}/live/latest`, {
+        params: latestParams,
+        headers: headers
+      });
+
+      if (debugMode) {
+        console.group('🌐 API Response: Fetch Latest Known Location');
+        console.log('📥 Status:', response.status);
+        console.log('📥 Response Data:', response.data);
+        console.groupEnd();
+      }
+
+      if (response.data?.status === "success" && response.data?.data?.locations?.length > 0) {
+        const location = response.data.data.locations[0];
+        const locationData = {
+          lat: parseFloat(location.latitude),
+          lng: parseFloat(location.longitude),
+          speed: location.speed,
+          battery: location.battery_level,
+          timestamp: location.server_time,
+          accuracy: location.accuracy,
+          age_seconds: location.age_seconds,
+          is_recent: location.is_recent
+        };
+
+        if (debugMode) {
+          console.log('✅ Last known location fetched:', locationData);
+        }
+
+        setLastKnownLocation(locationData);
+        setIsLive(false);
+      }
+    } catch (error) {
+      console.error('Failed to fetch latest known location:', error);
+      // Don't show toast here - this is a background operation
+    }
+  }, [selectedUser, users, debugMode]);
 
   // Initialize Google Map
   useEffect(() => {
@@ -260,13 +331,13 @@ export default function MapDashboard({ user, onLogout }) {
         if (debugMode) {
           console.group('🌐 API Call: Fetch Users');
           console.log('📤 CURL Command:');
-          console.log(generateCurlCommand('GET', `${LOC_API_BASEURL}/users`, usersHeaders, usersParams));
+          console.log(generateCurlCommand('GET', `${LOC_API_BASEURL}/users`, getLocationApiHeaders(), usersParams));
           console.groupEnd();
         }
 
         const usersRes = await axios.get(`${LOC_API_BASEURL}/users`, {
           params: usersParams,
-          headers: usersHeaders
+          headers: getLocationApiHeaders()
         });
 
         if (debugMode) {
@@ -420,13 +491,13 @@ export default function MapDashboard({ user, onLogout }) {
           if (debugMode) {
             console.group('🌐 API Call: Fetch Route History (Cache + Analytics)');
             console.log('📤 CURL Command:');
-            console.log(generateCurlCommand('GET', `${LOC_API_BASEURL}/live/history`, locationApiHeaders, historyParams));
+            console.log(generateCurlCommand('GET', `${LOC_API_BASEURL}/live/history`, getLocationApiHeaders(), historyParams));
             console.groupEnd();
           }
 
           response = await axios.get(`${LOC_API_BASEURL}/live/history`, {
             params: historyParams,
-            headers: locationApiHeaders
+            headers: getLocationApiHeaders()
           });
 
           if (debugMode) {
@@ -480,13 +551,13 @@ export default function MapDashboard({ user, onLogout }) {
           if (debugMode) {
             console.group('🌐 API Call: Fetch Route History (Database)');
             console.log('📤 CURL Command:');
-            console.log(generateCurlCommand('GET', `${LOC_API_BASEURL}/locations`, locationApiHeaders, params));
+            console.log(generateCurlCommand('GET', `${LOC_API_BASEURL}/locations`, getLocationApiHeaders(), params));
             console.groupEnd();
           }
 
           response = await axios.get(`${LOC_API_BASEURL}/locations`, {
             params,
-            headers: locationApiHeaders
+            headers: getLocationApiHeaders()
           });
 
           if (debugMode) {
@@ -564,6 +635,13 @@ export default function MapDashboard({ user, onLogout }) {
       // Clear current location when switching to history mode
       if (!isLiveTracking) {
         setCurrentLocation(null);
+        setLastKnownLocation(null);
+        setIsLive(true);
+        // Clear grace period timer
+        if (noPointsGracePeriodTimerRef.current) {
+          clearTimeout(noPointsGracePeriodTimerRef.current);
+          noPointsGracePeriodTimerRef.current = null;
+        }
       }
       return;
     }
@@ -583,14 +661,14 @@ export default function MapDashboard({ user, onLogout }) {
         if (debugMode) {
           console.group('🌐 API Call: Initialize Live Tracking');
           console.log('📤 CURL Command:');
-          console.log(generateCurlCommand('GET', `${LOC_API_BASEURL}/live/latest`, locationApiHeaders, latestParams));
+          console.log(generateCurlCommand('GET', `${LOC_API_BASEURL}/live/latest`, getLocationApiHeaders(), latestParams));
           console.groupEnd();
         }
 
         // Use Location API /live/latest to get initial position
         const response = await axios.get(`${LOC_API_BASEURL}/live/latest`, {
           params: latestParams,
-          headers: locationApiHeaders
+          headers: getLocationApiHeaders()
         });
 
         if (debugMode) {
@@ -663,6 +741,21 @@ export default function MapDashboard({ user, onLogout }) {
       };
 
       setCurrentLocation(locationData);
+      setIsLive(true); // Mark as live when we receive a point
+      setLastPointReceivedTime(Date.now()); // Update last point received time
+
+      // Clear any existing grace period timer
+      if (noPointsGracePeriodTimerRef.current) {
+        clearTimeout(noPointsGracePeriodTimerRef.current);
+      }
+
+      // Set new grace period timer
+      noPointsGracePeriodTimerRef.current = setTimeout(() => {
+        if (debugMode) {
+          console.log('⏱️ Grace period expired - no SSE points received, fetching last known location');
+        }
+        fetchLatestKnownLocation();
+      }, GRACE_PERIOD_MS);
 
       // Update polyline with new point
       if (actualPolylineRef.current && googleMapRef.current) {
@@ -682,7 +775,7 @@ export default function MapDashboard({ user, onLogout }) {
         };
       }
     }
-  }, [points, debugMode]);
+  }, [points, debugMode, fetchLatestKnownLocation]);
 
   // SSE connection is now managed by the useLiveLocations hook
   // No need for manual connection management or polling fallback
@@ -704,25 +797,30 @@ export default function MapDashboard({ user, onLogout }) {
       markerRef.current.map = null;
     }
 
-    // Create custom marker element (red circle with white border)
+    // Create custom marker element with color based on live/last known status
     const markerElement = document.createElement('div');
     markerElement.style.width = '20px';
     markerElement.style.height = '20px';
     markerElement.style.borderRadius = '50%';
-    markerElement.style.backgroundColor = '#EF4444';
+    // Red for live, gray for last known
+    markerElement.style.backgroundColor = isLive ? '#EF4444' : '#9CA3AF';
     markerElement.style.border = '3px solid #FFFFFF';
     markerElement.style.boxShadow = '0 2px 6px rgba(0,0,0,0.3)';
+    // Add pulsing animation for live locations
+    if (isLive) {
+      markerElement.style.animation = 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite';
+    }
 
     markerRef.current = new window.google.maps.marker.AdvancedMarkerElement({
       position: { lat, lng },
       map: googleMapRef.current,
       content: markerElement,
-      title: 'Current Location'
+      title: isLive ? 'Current Location' : 'Last Known Location'
     });
 
     // Pan to current location
     googleMapRef.current.panTo({ lat, lng });
-  }, [currentLocation]);
+  }, [currentLocation, isLive]);
 
   // Reverse geocode current location to get address
   useEffect(() => {
@@ -735,6 +833,15 @@ export default function MapDashboard({ user, onLogout }) {
 
     fetchAddress();
   }, [currentLocation]);
+
+  // Cleanup grace period timer on unmount
+  useEffect(() => {
+    return () => {
+      if (noPointsGracePeriodTimerRef.current) {
+        clearTimeout(noPointsGracePeriodTimerRef.current);
+      }
+    };
+  }, []);
 
   return (
     <div className="relative h-screen w-full">
@@ -873,9 +980,14 @@ export default function MapDashboard({ user, onLogout }) {
               {isLiveTracking && currentLocation && (
                 <div className="mt-3 pt-3 border-t border-slate-200">
                   <h4 className="text-xs font-semibold text-slate-800 mb-2 flex items-center gap-2">
-                    <div className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
-                    Live Location
+                    <div className={`h-2 w-2 rounded-full ${isLive ? 'bg-red-500 animate-pulse' : 'bg-gray-400'}`} />
+                    {isLive ? 'Live Location' : 'Last Known Location'}
                   </h4>
+                  {!isLive && (
+                    <div className="mb-2 p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800">
+                      📍 Last seen {formatTimeAgo(currentLocation.timestamp)}
+                    </div>
+                  )}
                   <div className="space-y-2 text-xs">
                     <div className="flex items-start gap-2 text-slate-700">
                       <MapPin className="h-3 w-3 mt-0.5 flex-shrink-0" />
@@ -1198,10 +1310,16 @@ export default function MapDashboard({ user, onLogout }) {
             </div>
           )}
           {isLiveTracking && (
-            <div className="flex items-center gap-3">
-              <div className="h-3 w-3 rounded-full bg-red-500 border-2 border-white" />
-              <span className="text-slate-700">Live Location</span>
-            </div>
+            <>
+              <div className="flex items-center gap-3">
+                <div className="h-3 w-3 rounded-full bg-red-500 border-2 border-white animate-pulse" />
+                <span className="text-slate-700">Live Location</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="h-3 w-3 rounded-full bg-gray-400 border-2 border-white" />
+                <span className="text-slate-700">Last Known Location</span>
+              </div>
+            </>
           )}
         </div>
       </div>
