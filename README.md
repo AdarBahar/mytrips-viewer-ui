@@ -46,6 +46,17 @@ The application uses **two separate APIs**:
 
 **Note**: The backend (`backend/server.py`) is **optional** and only needed for local development. In production, the frontend calls both APIs directly.
 
+## 📖 Documentation
+
+For a comprehensive overview of the project, including architecture, completed tasks, and remaining work, see **[Context.md](Context.md)**.
+
+**Key Documentation:**
+- **[Context.md](Context.md)** - Project overview, architecture, tasks, and references
+- **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** - Production deployment guide
+- **[docs/DEPLOYMENT_BAHAR.md](docs/DEPLOYMENT_BAHAR.md)** - www.bahar.co.il deployment
+- **[SECURITY.md](SECURITY.md)** - Security guidelines and best practices
+- **[QUICKSTART.md](QUICKSTART.md)** - Quick start guide for developers
+
 ## 📋 Prerequisites
 
 - **Node.js** 18+ and npm/yarn
